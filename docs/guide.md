@@ -180,7 +180,7 @@ logged → reports/bets/2026-06-20.json
 |---|---|---|
 | `talent.py` | ClubElo.com | 俱乐部 ELO 均值 → 国家队进攻/防守强度 |
 | `fcratings.py` | EA FC25 球员评分 | OVR + 攻防分项 → 强度先验 |
-| `injuries.py` | `data/injuries_wc2026.json` | 赛前缺阵球员从阵容移除后重算强度 |
+| `injuries.py` | `data/injuries_wc2026.json`（静态先验）+ API-Football `/injuries`（预测日实时拉取，自动合并） | 赛前缺阵球员从阵容移除后重算强度 |
 
 **跨联合会修正**（Run 28）：UEFA/CONMEBOL 与其他联合会对阵时，
 主流模型系统性低估强队优势 → 对强队 λ 乘以 `exp(+0.075)`（gap=0.15）。
@@ -224,11 +224,12 @@ P_final = 0.60 × P_market + 0.40 × P_model_adj
 - 一次反解，所有 AH/OU 线（±0.5、±1、±1.5、±2、±2.5、OU 2/2.5/3/3.5/4）都可算 edge
 - 与 Pinnacle 的"1X2 + AH + OU 内部一致定价"逻辑同源
 
-**白名单约束：**
-- OU 1.5 已在 Run 27 中实证拒绝（反技能），硬封锁
-- AH 整数线（0、±1、±2）和 OU 整数线（2、3、4）已加入白名单，
-  但**待 P3.4 完成各线独立 walk-forward 后才正式验证**——目前依赖
-  λ 反解的内部一致性间接信任
+**白名单约束（Run 27 + Run 30 验证）：**
+- **OU 1.5**：Run 27 实证拒绝（Brier 劣于基线），硬封锁
+- **OU 2.0**：Run 30 实证拒绝（Δ Brier +0.030，反技能），硬封锁——与 OU 1.5 同属 DC ρ 低分修正区，模型在此段系统性失准
+- **AH −2.5 到 +2.5（含所有整数线）**：Run 30（2018-2024，n=419-574/线）全部 beat 基线，正式验证
+- **OU 2.5 到 4.5**：Run 27 + Run 30 验证通过（OU 2.5 低置信度）
+- **选线规则**：每场每类市场（AH / OU 分别）只推送 edge 最高的一条线进入 Kelly 引擎，避免同一方向的嵌套押注
 
 ### 4.6 罚点球：公平硬币（Run 29）
 
@@ -310,7 +311,7 @@ PYTHONPATH=. python -m skill.helpers.cli <subcommand> [args]
 | 俱乐部 ELO | clubelo.com（主）/ xgabora GitHub 镜像（备用） | 球员俱乐部强度 → 国家队 talent prior；主源 503 时自动切换镜像 | 无需 |
 | EA FC25 球员评分 | 公开数据集（OVR + 攻防分项） | 攻防分离 talent prior | 无需 |
 | 联合会归属 | `data/confederations.json` | 跨洲强度修正（Run 28） | 无需 |
-| 伤病 / 缺阵 | `data/injuries_wc2026.json`（手工维护） | 阵容剔除后重算强度 | 无需 |
+| 伤病 / 缺阵 | `data/injuries_wc2026.json`（静态先验，手工维护）+ API-Football `/injuries`（每次 `predict` 自动拉取当日伤病报告并合并） | 阵容剔除后重算强度 | `APIFOOTBALL_KEY`（可选） |
 
 ### 8.2 可选付费升级
 
@@ -352,8 +353,11 @@ A: 主流亚洲盘口同时提供让球盘和大小盘三栏式（输赢盘/让�
 ahou 模式与之对齐，Kelly 在两个市场之间统一分配仓位。
 
 **Q: 现在 AH ±1.5、±2.5、整数线、OU 各档都能下注吗？**  
-A: 是的。1X2→λ_market 反解出市场隐含的进球期望后，所有线条的市场隐含概率
-都可以一致地计算。不再受限于早期 ±0.5 的 3 桶映射。
+A: 大部分可以。1X2→λ_market 反解出市场隐含的进球期望后，所有线条的市场隐含概率
+都可以一致地计算。但有两条线被 walk-forward 实证拒绝（Run 27 + Run 30），永久封锁：
+**OU 1.5**（Brier 劣于无技能基线）和 **OU 2.0**（Δ Brier +0.030，强反技能）。
+其余 AH −2.5 到 +2.5 及 OU 2.5-4.5 均已通过 Run 30 验证。
+每场每类市场（AH / OU 各自）只推送 edge 最高的一条线，避免重复押注同方向嵌套赌注。
 
 **Q: 点球大战概率为何是 50/50？**  
 A: Walk-forward 在 231 场实际点球上验证，任何基于球队强度的加权方案都比硬币更差（Run 29）。
