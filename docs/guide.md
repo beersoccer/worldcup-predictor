@@ -59,8 +59,10 @@ PYTHONPATH=. python -m skill.helpers.cli fetch --all
 PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 10000
 
 # 跨时区提前准备：今晚提前为明日生成预测和下注建议
-PYTHONPATH=. python -m skill.helpers.cli predict --all --simulate --date 2026-06-22
-PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 10000 --date 2026-06-22
+# --date 的作用：以 2026-06-23 为 DC 模型截止日（as_of），结果写入 reports/2026-06-23/
+# predict 始终预测全部 104 场；bet --date 只从该目录取 date==2026-06-23 的比赛
+PYTHONPATH=. python -m skill.helpers.cli predict --all --simulate --date 2026-06-23
+PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 10000 --date 2026-06-23
 ```
 
 ### 2.2 赛后结算（次日）
@@ -370,12 +372,15 @@ A: 运行 `review` 后，看板的"Betting"面板会显示累计 P&L、ROI 和�
 A: 正常现象，`api.clubelo.com` 服务器偶发宕机。系统会自动切换到 GitHub 镜像数据（895 支俱乐部，最新至 2025-06-01），talent 层仍然工作，预测结果基本不受影响。无需手动干预；等官方 API 恢复后下一次 `fetch --all` 会自动更新本地缓存。
 
 **Q: 如何提前为明日比赛生成下注建议（避免半夜操作）？**  
-A: 使用 `--date` 参数指定日期，今晚就可以完成明日的准备：
+A: 使用 `--date` 指定明日日期。`predict --all` 无论是否加 `--date` 都预测全部 104 场；
+`--date` 的作用是：①以该日期为 DC 模型截止日（`as_of`），②将结果写入对应日期目录，
+③查询该日期的首发 / 伤病。`bet --date` 则只从该目录里筛选出 `date == 指定日期` 的比赛生成建议。
 ```bash
 PYTHONPATH=. python -m skill.helpers.cli predict --all --simulate --date 2026-06-23
 PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 10000 --date 2026-06-23
 ```
-注意赛前 30 分钟再跑一次 `fetch --all` + `bet --date` 以获取最新首发和市场赔率。
+赛前 30 分钟再跑一次 `fetch --all` + `predict --date 2026-06-23` + `bet --date 2026-06-23`，
+以获取最新首发和市场赔率。
 
 ---
 
