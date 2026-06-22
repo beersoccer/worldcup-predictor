@@ -48,7 +48,7 @@ PYTHONPATH=. python -m skill.helpers.cli fetch --all
 PYTHONPATH=. python -m skill.helpers.cli predict --simulate
 
 # Step 3：查看今日推荐下注（默认 AH 让球盘模式）
-PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 10000
+PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 1500
 
 # Step 4（可选）：发布到本地看板
 PYTHONPATH=. python -m skill.helpers.cli publish
@@ -56,13 +56,13 @@ python -m http.server 8780 --directory site   # 浏览器打开 http://localhost
 
 # Step 5：赛前 30 分钟再次更新（获取最新 Polymarket 价格 + 确认首发）
 PYTHONPATH=. python -m skill.helpers.cli fetch --all
-PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 10000
+PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 1500
 
 # 跨时区提前准备：今晚提前为明日生成预测和下注建议
 # --date 的作用：以 2026-06-23 为 DC 模型截止日（as_of），结果写入 reports/2026-06-23/
 # predict 预测所有未完赛场次；bet --date 只从该目录取 date==2026-06-23 的比赛
 PYTHONPATH=. python -m skill.helpers.cli predict --simulate --date 2026-06-23
-PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 10000 --date 2026-06-23
+PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 1500 --date 2026-06-23
 ```
 
 ### 2.2 赛后结算（次日）
@@ -370,6 +370,15 @@ A: 运行 `review` 后，看板的"Betting"面板会显示累计 P&L、ROI 和�
 
 **Q: 出现 `[clubelo] primary API unavailable` 警告怎么办？**  
 A: 正常现象，`api.clubelo.com` 服务器偶发宕机。系统会自动切换到 GitHub 镜像数据（895 支俱乐部，最新至 2025-06-01），talent 层仍然工作，预测结果基本不受影响。无需手动干预；等官方 API 恢复后下一次 `fetch --all` 会自动更新本地缓存。
+
+**Q: 比赛预测是否有必要每个比赛日都跑，还是开赛前预跑一次就够？**  
+A: **必须每个比赛日都跑**，原因有四：
+1. **市场锚定层每天在变**（权重 60%）。Polymarket / Kalshi 的赔率随资金流、伤病新闻、首发消息实时变动；锚点一变，`P_final = 0.60·P_market + 0.40·P_model` 跟着变，edge 和 Kelly stake 也变。
+2. **DC 模型 `as_of` 截止日**。已完赛的小组赛结果会进入训练集刷新球队 α/β——例如阿根廷小组赛 3-0 大胜，会在 16 强预测时被吸收。一次性预跑等于用一个月前的过时强度算淘汰赛。
+3. **首发 XI + 伤病只能赛前 1 小时内确认**。`API-Football /injuries` 按日期查询，主力缺阵通过 talent 层下调 λ；开赛前几周这个信号根本不存在。
+4. **`bet --date` 只对指定日期出 slate**，没跑就没有当日推荐。
+
+唯一一次性预跑还有用的场景是**看夺冠概率分布**（`market` / `simulation.json`），那个变化慢。但**下注建议必须每日刷新**。
 
 **Q: 如何提前为明日比赛生成下注建议（避免半夜操作）？**  
 A: 使用 `--date` 指定明日日期。`predict` 预测所有未完赛场次；`--date` 的作用是：
