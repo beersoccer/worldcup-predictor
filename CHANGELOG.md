@@ -14,6 +14,25 @@ removed, or has its weight changed (cross-references `reports/backtests/FINDINGS
 ## [Unreleased]
 
 ### Added
+- **`predict --date YYYY-MM-DD`**. Writes predictions to `reports/<date>/`
+  using that date as the DC model `as_of` cutoff and lineup lookup target.
+  Allows users in non-UTC timezones to pre-generate next-day slates the
+  evening before without waiting until local midnight.
+- **ClubElo three-tier resilience** (`data_loader.fetch_club_elo`).
+  Primary: `api.clubelo.com` (live daily snapshot, 7-day local cache TTL).
+  Fallback: `xgabora/Club-Football-Match-Data-2000-2025` GitHub mirror
+  (bi-monthly snapshots, 895 clubs, latest 2025-06-01) — activated
+  automatically when the primary API returns 5xx / times out.
+  Last resort: stale local cache of any age.
+  Resolves the `[talent skipped] 503` that appeared when `api.clubelo.com`'s
+  Windows IIS server was down during WC2026.
+
+### Fixed
+- **`bet --date` now filters to that date's matches only**. Previously all
+  72 fixtures in `predictions.json` were scored regardless of match date,
+  producing 120+ spurious recommendations spanning the full tournament.
+
+### Added
 - **1X2 → λ_market inversion** (`derived_markets.infer_market_lambdas`).
   Industry-standard path used by Pinnacle / academic references for
   converting European 1X2 odds to Asian Handicap and Over/Under fair prices:

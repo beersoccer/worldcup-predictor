@@ -307,7 +307,7 @@ PYTHONPATH=. python -m skill.helpers.cli <subcommand> [args]
 | 预测市场（1X2） | Polymarket Gamma API + Kalshi | 市场锚定（per-match 1X2） | 无需 |
 | 球场 / 海拔 / 坐标 | `data/venues_wc2026.json`（自建静态表） | 海拔上下文调整 | 无需 |
 | 天气（仅展示） | Open-Meteo | 看板展示（已被 Run 19/20 证伪不作为预测因子） | 无需 |
-| 俱乐部 ELO | clubelo.com | 球员俱乐部强度 → 国家队 talent prior | 无需 |
+| 俱乐部 ELO | clubelo.com（主）/ xgabora GitHub 镜像（备用） | 球员俱乐部强度 → 国家队 talent prior；主源 503 时自动切换镜像 | 无需 |
 | EA FC25 球员评分 | 公开数据集（OVR + 攻防分项） | 攻防分离 talent prior | 无需 |
 | 联合会归属 | `data/confederations.json` | 跨洲强度修正（Run 28） | 无需 |
 | 伤病 / 缺阵 | `data/injuries_wc2026.json`（手工维护） | 阵容剔除后重算强度 | 无需 |
@@ -361,6 +361,17 @@ A: Walk-forward 在 231 场实际点球上验证，任何基于球队强度的�
 **Q: 如何查看历史下注的盈亏？**  
 A: 运行 `review` 后，看板的"Betting"面板会显示累计 P&L、ROI 和最大回撤。
 或直接读 `reports/bets/` 目录下各日期的 JSON 文件。
+
+**Q: 出现 `[clubelo] primary API unavailable` 警告怎么办？**  
+A: 正常现象，`api.clubelo.com` 服务器偶发宕机。系统会自动切换到 GitHub 镜像数据（895 支俱乐部，最新至 2025-06-01），talent 层仍然工作，预测结果基本不受影响。无需手动干预；等官方 API 恢复后下一次 `fetch --all` 会自动更新本地缓存。
+
+**Q: 如何提前为明日比赛生成下注建议（避免半夜操作）？**  
+A: 使用 `--date` 参数指定日期，今晚就可以完成明日的准备：
+```bash
+PYTHONPATH=. python -m skill.helpers.cli predict --all --simulate --date 2026-06-23
+PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 10000 --date 2026-06-23
+```
+注意赛前 30 分钟再跑一次 `fetch --all` + `bet --date` 以获取最新首发和市场赔率。
 
 ---
 
