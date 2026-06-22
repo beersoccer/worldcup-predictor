@@ -55,7 +55,7 @@ PYTHONPATH=. $PY -m skill.helpers.cli fetch --all
 PYTHONPATH=. $PY -m skill.helpers.cli predict --match <fixture_id>
 
 # 全部场次 + 蒙特卡洛晋级树
-PYTHONPATH=. $PY -m skill.helpers.cli predict --all --simulate
+PYTHONPATH=. $PY -m skill.helpers.cli predict --simulate
 
 # 模型 vs 市场(Polymarket 去抽水夺冠赔率 + edge)
 PYTHONPATH=. $PY -m skill.helpers.cli market
