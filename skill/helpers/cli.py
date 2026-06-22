@@ -2,7 +2,7 @@
 
 Usage:
   python -m skill.helpers.cli fetch --all
-  python -m skill.helpers.cli predict --all [--simulate]
+  python -m skill.helpers.cli predict [--simulate]
   python -m skill.helpers.cli predict --match wc2026-000
   python -m skill.helpers.cli backtest --start 2010-01-01 --end 2026-05-31 [--xi 0.0019]
 """
@@ -125,10 +125,6 @@ def _cmd_predict(args):
     if absences:
         print(f"[lineups] confirmed XI applied for {len(absences)} side(s) today")
 
-    if not args.match and not args.all:
-        print("predict: specify --all (full tournament) or --match <id>", file=sys.stderr)
-        sys.exit(1)
-
     if args.match:
         row = fixtures[fixtures["fixture_id"] == args.match]
         if row.empty:
@@ -139,8 +135,14 @@ def _cmd_predict(args):
         print(json.dumps(out, indent=2, ensure_ascii=False))
         return
 
+    finished = fixtures["home_score"].notna()
+    n_finished = int(finished.sum())
+    pending = fixtures[~finished]
+    if n_finished:
+        print(f"[predict] skipping {n_finished} already-finished fixture(s)")
+
     preds = []
-    for _, row in fixtures.iterrows():
+    for _, row in pending.iterrows():
         try:
             preds.append(_predict_one(model, row, squads, ctx.get(row["fixture_id"]),
                                       match_markets, absences))
@@ -604,7 +606,7 @@ def _cmd_review(args):
     print(json.dumps(live, indent=2, ensure_ascii=False))
 
     # refresh forward-looking predictions + sim + publish
-    _cmd_predict(argparse.Namespace(match=None, all=True, simulate=True, sims=args.sims))
+    _cmd_predict(argparse.Namespace(match=None, simulate=True, sims=args.sims))
     _cmd_publish(argparse.Namespace(date=None))
 
 
@@ -796,7 +798,7 @@ def _cmd_publish(args):
     preds_f = rep / "predictions.json"
     sim_f = rep / "simulation.json"
     if not preds_f.exists():
-        print(f"no predictions at {preds_f} — run `predict --all --simulate` first", file=sys.stderr)
+        print(f"no predictions at {preds_f} — run `predict --simulate` first", file=sys.stderr)
         sys.exit(1)
     sim = json.loads(sim_f.read_text()) if sim_f.exists() else {}
     bracket_f = rep / "bracket.json"
@@ -1293,7 +1295,7 @@ def _cmd_bet(args):
     rep = paths.report_dir(args.date)
     preds_f = rep / "predictions.json"
     if not preds_f.exists():
-        print(f"no predictions at {preds_f} — run `predict --all` first", file=sys.stderr)
+        print(f"no predictions at {preds_f} — run `predict` first", file=sys.stderr)
         sys.exit(1)
     preds = json.loads(preds_f.read_text())
     mode = getattr(args, "mode", "ahou")
@@ -1390,8 +1392,8 @@ def main(argv=None):
     pf.set_defaults(func=_cmd_fetch)
 
     pp = sub.add_parser("predict")
-    pp.add_argument("--match", default=None)
-    pp.add_argument("--all", action="store_true")
+    pp.add_argument("--match", default=None,
+                    help="Single fixture id (e.g. wc2026-000); omit to predict all fixtures")
     pp.add_argument("--simulate", action="store_true")
     pp.add_argument("--sims", type=int, default=50000)
     pp.add_argument("--date", default=None,
