@@ -14,6 +14,36 @@ removed, or has its weight changed (cross-references `reports/backtests/FINDINGS
 ## [Unreleased]
 
 ### Added
+- **API-Football live injury feed** (`data_loader.fetch_apifootball_injuries`).
+  On each `predict` run, queries the `/injuries` endpoint for the target date,
+  merges results with the static `injuries_wc2026.json`, and de-duplicates by
+  (player, team). New injuries that weren't in the static file are counted and
+  printed. Zero-impact when `APIFOOTBALL_KEY` is absent.
+- **`_best_line_per_market_type` filter in `cli bet`**. Per match per market
+  type (AH / OU separately), only the opportunity with the highest edge is
+  forwarded to the Kelly engine. This prevents staking correlated nested bets
+  (e.g. AH −1.5 and AH −2.5 on the same match simultaneously). AH and OU
+  remain orthogonal and can both appear for the same match.
+
+### Changed
+- **`ou_2` added to `MARKET_WHITELIST` rejection list** (Run 30). Previously
+  flagged "backtest pending"; now confirmed anti-skill (Brier Δ +0.030 vs
+  baseline, ECE 0.201). Hard-blocked alongside `ou_1.5`.
+- **All remaining pending whitelist lines validated** (Run 30). AH ±2.5, AH
+  integers 0/±1/±2, OU 3/4/4.5 all beat the no-skill baseline on Brier
+  (Δ −0.001 to −0.053). Comments updated from "backtest pending (P3.4)" to
+  "validated Run 30".
+
+### Backtest
+- **Run 30** (FINDINGS.md) — P3.4 extended AH/OU walk-forward (2018-2024 majors,
+  n=419-574 per line). All AH lines from −2.5 to +2.5 validated (Δ Brier −0.001
+  to −0.053). OU 1.5 and OU 2.0 rejected (anti-skill); OU 2.5-4.5 validated.
+  Integer lines pass Brier but show elevated ECE (0.06-0.15) vs half lines
+  (~0.03) — the new per-match highest-edge filter mitigates this.
+
+---
+
+### Added
 - **`predict --date YYYY-MM-DD`**. Writes predictions to `reports/<date>/`
   using that date as the DC model `as_of` cutoff and lineup lookup target.
   Allows users in non-UTC timezones to pre-generate next-day slates the

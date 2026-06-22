@@ -49,7 +49,21 @@ def _cmd_predict(args):
     # pre-tournament injury prior: drop confirmed tournament-long absentees from the
     # squad BEFORE strength is computed, so the projected XI rebuilds and attack/defence
     # fall by the absentee's marginal contribution (endogenous, not a tuned penalty).
+    # Merge static injuries_wc2026.json with live API-Football /injuries feed.
     injuries = data_loader.load_injuries()
+    _inj_date = getattr(args, "date", None) or pd.Timestamp.now().strftime("%Y-%m-%d")
+    try:
+        live_injuries = data_loader.fetch_apifootball_injuries(_inj_date)
+        if live_injuries:
+            existing_keys = {(e.get("player", "").lower(), e.get("team", "").lower())
+                             for e in injuries}
+            added = [e for e in live_injuries
+                     if (e["player"].lower(), e["team"].lower()) not in existing_keys]
+            if added:
+                print(f"[injuries] +{len(added)} live report(s) from API-Football")
+                injuries = injuries + added
+    except Exception as e:  # noqa: BLE001
+        print(f"[injuries live skipped] {e}", file=sys.stderr)
     removed_inj, inj_exclude, squads_full = {}, {}, squads
     if injuries:
         from ..model import injuries as injmod
@@ -1219,6 +1233,39 @@ def _ou_opportunities(p: dict, match: str, kellymod) -> list:
     return ops
 
 
+def _best_line_per_market_type(ops: list) -> list:
+    """For each (match, market_type) group keep only the opportunity with the highest edge.
+
+    AH and OU are orthogonal (margin vs total goals) so they survive as separate slots.
+    Within AH, lines like -1.5 and -2.5 are nested/correlated — only the sharpest edge wins.
+    Within OU, same rule: keep the one line with the highest model-vs-market edge.
+    """
+    from ..bet import kelly as kellymod
+
+    best: dict[tuple, object] = {}
+    for op in ops:
+        label = op.label
+        # extract market_type: "AH" or "OU" from label suffix; fallback to "1x2"
+        if " · AH " in label:
+            market_type = "ah"
+            match_part = label.split(" · AH ")[0]
+        elif " · OU " in label:
+            market_type = "ou"
+            match_part = label.split(" · OU ")[0]
+        elif " · 1X2 " in label:
+            market_type = "1x2"
+            match_part = label.split(" · 1X2 ")[0]
+        else:
+            market_type = "other"
+            match_part = label
+        group_key = (match_part, market_type)
+        e = kellymod.edge(op.p_win, op.decimal_odds)
+        existing = best.get(group_key)
+        if existing is None or e > kellymod.edge(existing.p_win, existing.decimal_odds):
+            best[group_key] = op
+    return list(best.values())
+
+
 def _cmd_bet(args):
     """Generate today's recommended bet slate from the latest predictions.
 
@@ -1272,6 +1319,11 @@ def _cmd_bet(args):
             ops.extend(_ah_opportunities(p, match, kellymod))
         if want_ou:
             ops.extend(_ou_opportunities(p, match, kellymod))
+    # Per-match per-market-type: keep only the highest-edge line to avoid staking
+    # multiple nested correlated bets on the same side (e.g. AH -1.5 + AH -2.5
+    # on the same match both require home to win by a large margin).
+    # AH and OU are orthogonal markets and may coexist within the same match.
+    ops = _best_line_per_market_type(ops)
     out = kellymod.portfolio_kelly(ops, bankroll=args.bankroll)
 
     bets_dir = paths.REPORTS / "bets"

@@ -602,6 +602,38 @@ def lineup_absences(squad: list[dict], xi_names: set) -> set[str]:
     return {p["name"] for p in squad if _n(p["name"]) not in xi_names}
 
 
+def fetch_apifootball_injuries(date_iso: str) -> list[dict]:
+    """API-Football /injuries for WC2026 on `date_iso` → [{player, team, type, reason}].
+
+    Queries the free tier (100 req/day). Returns [] without a key, on error, or when
+    no injury reports exist. Merges with the static injuries_wc2026.json at prediction
+    time (caller deduplicates by player+team).
+    """
+    if not os.environ.get("APIFOOTBALL_KEY"):
+        return []
+    out = []
+    try:
+        r = requests.get(
+            f"{APIFOOTBALL_BASE}/injuries",
+            params={"league": WC_APIF_LEAGUE, "date": date_iso},
+            headers=_apif_headers(),
+            timeout=30,
+        )
+        r.raise_for_status()
+        for entry in r.json().get("response", []):
+            player = (entry.get("player") or {})
+            team = (entry.get("team") or {})
+            pname = player.get("name")
+            tname = _canon(team.get("name"))
+            reason = player.get("reason") or player.get("type") or "injury"
+            if pname and tname:
+                out.append({"player": pname, "team": tname,
+                            "reason": reason, "source": "api-football"})
+    except (requests.RequestException, ValueError, KeyError):
+        pass
+    return out
+
+
 def fetch_match_markets() -> dict[tuple, list[float]]:
     """Per-match 1X2 market consensus (de-vigged) keyed by (home, away).
 

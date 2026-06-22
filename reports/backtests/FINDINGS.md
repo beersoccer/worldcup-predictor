@@ -822,3 +822,63 @@ was therefore introducing systematic error in every Monte Carlo knockout tie.
 
 Net: adopting the doctrine ("test before believing") prevented adding a noise
 factor AND surfaced a pre-existing bug. Two wins from one investigation.
+
+## Run 30 — P3.4 extended whitelist walk-forward (2018-2024 majors, n≈420-574 per line)
+
+**Purpose:** validate the 9 lines added to `MARKET_WHITELIST` after the 1X2→λ_market
+inversion upgrade (Run 27+ scope: AH ±2.5, AH integers 0/±1/±2, OU 2/3/4/4.5).
+Walk-forward, look-ahead-free, same protocol as Run 27. Integer lines exclude push
+matches from Brier/log-loss (push matches are stake-refunded, not binary outcomes).
+
+File: `reports/backtests/backtest_markets_2018-01-01_2024-12-31_xi0.001.json`
+
+### AH results
+
+| Line | n | Model Brier | Base Brier | Δ Brier | ECE | Decision |
+|------|---|------------|------------|---------|-----|----------|
+| AH −2.5 | 574 | 0.06862 | 0.08026 | **−0.012** | 0.024 | ✅ VALIDATED |
+| AH −2.0 | 503 | 0.07225 | 0.09179 | **−0.020** | 0.024 | ✅ VALIDATED |
+| AH −1.5 | 574 | 0.14230 | 0.16958 | **−0.027** | 0.032 | ✅ Re-confirmed Run 27 |
+| AH −1.0 | 452 | 0.15386 | 0.20270 | **−0.049** | 0.062 | ✅ VALIDATED |
+| AH −0.5 | 574 | 0.20025 | 0.24880 | **−0.049** | 0.048 | ✅ Re-confirmed Run 27 |
+| AH  0.0 | 419 | 0.19680 | 0.24946 | **−0.053** | 0.146 | ✅ VALIDATED (ECE high) |
+| AH +0.5 | 574 | 0.17220 | 0.21633 | **−0.044** | 0.032 | ✅ Re-confirmed Run 27 |
+| AH +1.0 | 470 | 0.11849 | 0.13556 | **−0.017** | 0.141 | ✅ VALIDATED (ECE high) |
+| AH +1.5 | 574 | 0.09421 | 0.11495 | **−0.021** | 0.031 | ✅ Re-confirmed Run 27 |
+| AH +2.0 | 531 | 0.05733 | 0.05840 | **−0.001** | 0.068 | ✅ VALIDATED (marginal) |
+| AH +2.5 | 574 | 0.05028 | 0.05429 | **−0.004** | 0.016 | ✅ VALIDATED |
+
+**All AH lines pass.** Integer lines (AH 0, ±1, ±2) show higher ECE (0.06-0.15) than
+half lines (~0.03) — the model is less well-calibrated at push-bearing lines, suggesting
+more caution at those specific odds. Brier criterion met in all cases.
+
+### OU results
+
+| Line | n | Model Brier | Base Brier | Δ Brier | ECE | Decision |
+|------|---|------------|------------|---------|-----|----------|
+| OU 1.5 | 574 | 0.22654 | 0.22123 | **+0.005** | 0.080 | ❌ REJECTED (Re-confirmed Run 27) |
+| OU 2.0 | 429 | 0.28566 | 0.25539 | **+0.030** | 0.201 | ❌ REJECTED (strong anti-skill) |
+| OU 2.5 | 574 | 0.25230 | 0.25533 | **−0.003** | 0.090 | ✅ Re-confirmed Run 27 (low-confidence) |
+| OU 3.0 | 457 | 0.20875 | 0.22086 | **−0.012** | 0.093 | ✅ VALIDATED |
+| OU 3.5 | 574 | 0.17591 | 0.18675 | **−0.011** | 0.060 | ✅ Re-confirmed Run 27 |
+| OU 4.0 | 504 | 0.10497 | 0.11624 | **−0.011** | 0.043 | ✅ VALIDATED |
+| OU 4.5 | 574 | 0.09466 | 0.10162 | **−0.007** | 0.039 | ✅ VALIDATED |
+
+**OU 2.0 fails badly** (Δ+0.030, ECE=0.201) — the model systematically mispredicts
+low-scoring matches in this band, possibly because OU 2.0 sits right in the DC ρ
+low-score correction zone where the model is most sensitive to parameterisation.
+**Newly blocked** (was `True`, now `False`).
+
+**OU 1.5** already rejected in Run 27 — confirmed.
+
+### Decisions
+
+- **`ah_minus_2.5` through `ah_plus_2.5`**: all validated, `MARKET_WHITELIST = True` ✅
+- **`ou_2`**: REJECTED, `MARKET_WHITELIST = False` ← **change from previous True**
+- **`ou_2.5` through `ou_4.5`**: validated (OU 2.5 low-confidence but positive) ✅
+
+The `ou_2` rejection is consistent with the Run 27 OU 1.5 rejection: the model is
+weakest at the low end of the OU distribution (ρ correction zone). AH integers pass
+but with elevated ECE — the highest-edge-line-per-market-type filter (`_best_line_per_market_type`)
+mitigates this by discarding the poorly-calibrated integer line when a sharper half-line
+carries a higher edge on the same match.
