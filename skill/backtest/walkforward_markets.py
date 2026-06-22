@@ -31,17 +31,27 @@ from ..model.elo import compute_elo_history
 from .walkforward import MAJOR
 
 
-# Standard test lines — half lines avoid push, the cleanest binary calibration check.
-AH_LINES = (-1.5, -0.5, 0.5, 1.5)     # handicap on home team
-OU_LINES = (1.5, 2.5, 3.5)
+# Standard test lines — half lines for clean binary calibration; integer lines included
+# for P3.4 validation of the expanded MARKET_WHITELIST.
+AH_LINES = (-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5)
+OU_LINES = (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5)
 
 
-def _ah_outcome(margin: int, line: float) -> int:
-    """AH binary settlement on a half line: 1 if home covers, 0 if away covers."""
-    return 1 if margin > -line else 0
+def _ah_outcome(margin: int, line: float) -> int | None:
+    """AH settlement: 1=home covers, 0=away covers, None=push (integer line, exact margin).
+
+    Push occurs only on integer lines when margin == -line exactly.
+    """
+    adjusted = margin + line   # positive → home wins
+    if adjusted == 0:
+        return None  # push
+    return 1 if adjusted > 0 else 0
 
 
-def _ou_outcome(total: int, line: float) -> int:
+def _ou_outcome(total: int, line: float) -> int | None:
+    """OU settlement: 1=over, 0=under, None=push (integer line, total == line)."""
+    if total == line:
+        return None  # push
     return 1 if total > line else 0
 
 
@@ -107,12 +117,19 @@ def run(
     if test.empty:
         return {"error": "no test matches in window"}
 
-    # Look-ahead-free base rate: empirical hit rate on matches BEFORE the test window.
+    # Look-ahead-free base rate: empirical hit rate on non-push matches BEFORE the test window.
     train_pool = hist[hist["date"] < t0].dropna(subset=["home_score", "away_score"])
-    train_margins = (train_pool["home_score"] - train_pool["away_score"]).to_numpy()
-    train_totals = (train_pool["home_score"] + train_pool["away_score"]).to_numpy()
-    base_ah = {ln: float((train_margins > -ln).mean()) for ln in ah_lines}
-    base_ou = {ln: float((train_totals > ln).mean()) for ln in ou_lines}
+    train_margins = (train_pool["home_score"] - train_pool["away_score"]).astype(int).to_numpy()
+    train_totals = (train_pool["home_score"] + train_pool["away_score"]).astype(int).to_numpy()
+    # For integer lines, push matches are excluded from base rate (same as binary metrics).
+    def _base_ah(ln):
+        mask = (train_margins + ln) != 0  # non-push
+        return float((train_margins[mask] > -ln).mean()) if mask.sum() > 0 else 0.5
+    def _base_ou(ln):
+        mask = train_totals != ln  # non-push
+        return float((train_totals[mask] > ln).mean()) if mask.sum() > 0 else 0.5
+    base_ah = {ln: _base_ah(ln) for ln in ah_lines}
+    base_ou = {ln: _base_ou(ln) for ln in ou_lines}
 
     # Per-line accumulators
     ah_probs = {ln: [] for ln in ah_lines}
@@ -144,12 +161,16 @@ def run(
 
         for ln in ah_lines:
             res = derived.asian_handicap(lam_h, lam_a, model.rho, ln)
-            ah_probs[ln].append(res["p_home"])
-            ah_outs[ln].append(_ah_outcome(margin, ln))
+            outcome = _ah_outcome(margin, ln)
+            if outcome is not None:  # skip push (integer line, exact margin)
+                ah_probs[ln].append(res["p_home"])
+                ah_outs[ln].append(outcome)
         for ln in ou_lines:
             res = derived.over_under(lam_h, lam_a, model.rho, ln)
-            ou_probs[ln].append(res["p_over"])
-            ou_outs[ln].append(_ou_outcome(total, ln))
+            outcome = _ou_outcome(total, ln)
+            if outcome is not None:  # skip push
+                ou_probs[ln].append(res["p_over"])
+                ou_outs[ln].append(outcome)
 
     ah_report, ou_report = {}, {}
     for ln in ah_lines:

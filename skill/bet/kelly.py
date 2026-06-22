@@ -30,27 +30,26 @@ DEFAULT_MIN_FRACTION = 0.005    # 0.5% bankroll
 # fitting rule that protected the model in Runs 14/16/17.
 MARKET_WHITELIST = {
     "1x2": True,         # validated headline metric (Run 23, ECE 0.0144)
-    # AH half lines — directly validated in Run 27 for ±0.5/±1.5
-    "ah_minus_2.5": True,  # extended via λ-inference path; backtest pending (P3.4)
-    "ah_minus_1.5": True,  # validated Run 27
-    "ah_minus_0.5": True,  # validated Run 27
-    "ah_plus_0.5":  True,  # validated Run 27
-    "ah_plus_1.5":  True,  # validated Run 27
-    "ah_plus_2.5":  True,  # extended via λ-inference path; backtest pending (P3.4)
-    # AH integer lines — push-bearing; backtest pending (P3.4)
-    "ah_minus_2":   True,
-    "ah_minus_1":   True,
-    "ah_0":         True,
-    "ah_plus_1":    True,
-    "ah_plus_2":    True,
+    # AH lines — all validated Run 30 (2018-2024, n=419-574, all beat baseline on Brier)
+    "ah_minus_2.5": True,  # validated Run 30 Δbrier=-0.012
+    "ah_minus_2":   True,  # validated Run 30 Δbrier=-0.020 (push-bearing)
+    "ah_minus_1.5": True,  # validated Run 27 + Run 30 Δbrier=-0.027
+    "ah_minus_1":   True,  # validated Run 30 Δbrier=-0.049 (push-bearing)
+    "ah_minus_0.5": True,  # validated Run 27 + Run 30 Δbrier=-0.049
+    "ah_0":         True,  # validated Run 30 Δbrier=-0.053 (push-bearing)
+    "ah_plus_0.5":  True,  # validated Run 27 + Run 30 Δbrier=-0.044
+    "ah_plus_1":    True,  # validated Run 30 Δbrier=-0.017 (push-bearing)
+    "ah_plus_1.5":  True,  # validated Run 27 + Run 30 Δbrier=-0.021
+    "ah_plus_2":    True,  # validated Run 30 Δbrier=-0.001 (push-bearing; marginal)
+    "ah_plus_2.5":  True,  # validated Run 30 Δbrier=-0.004
     # OU lines
-    "ou_1.5": False,     # REJECTED Run 27 — model Brier 0.005 worse than baseline
-    "ou_2":   True,      # extended via λ-inference path; integer push line
-    "ou_2.5": True,      # validated Run 27 (low-confidence)
-    "ou_3":   True,      # extended; integer push line
-    "ou_3.5": True,      # validated Run 27 (low-confidence)
-    "ou_4":   True,      # extended; integer push line
-    "ou_4.5": True,      # extended via λ-inference path
+    "ou_1.5": False,     # REJECTED Run 27 + Run 30 — model Brier worse than baseline
+    "ou_2":   False,     # REJECTED Run 30 — Δbrier=+0.030 (anti-skill); push-bearing
+    "ou_2.5": True,      # validated Run 27 + Run 30 Δbrier=-0.003
+    "ou_3":   True,      # validated Run 30 Δbrier=-0.012 (push-bearing)
+    "ou_3.5": True,      # validated Run 27 + Run 30 Δbrier=-0.011
+    "ou_4":   True,      # validated Run 30 Δbrier=-0.011 (push-bearing)
+    "ou_4.5": True,      # validated Run 30 Δbrier=-0.007
 }
 
 
