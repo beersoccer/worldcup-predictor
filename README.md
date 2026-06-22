@@ -39,7 +39,7 @@ pip install -r requirements.txt
 cp .env.example .env   # see docs/guide.md §1 for the keys
 
 PYTHONPATH=. python -m skill.helpers.cli fetch --all
-PYTHONPATH=. python -m skill.helpers.cli predict --all --simulate
+PYTHONPATH=. python -m skill.helpers.cli predict --simulate
 PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 10000
 ```
 
