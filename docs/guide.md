@@ -271,8 +271,8 @@ PYTHONPATH=. python -m skill.helpers.cli <subcommand> [args]
 | 子命令 | 参数 | 用途 |
 |---|---|---|
 | `fetch --all` | — | 拉取历史结果、赛程、阵容、赔率、天气、首发 |
-| `predict --all --simulate` | `--sims N`（默认 50000），`--date YYYY-MM-DD` | 预测全部 104 场 + 蒙特卡洛锦标赛模拟；`--date` 可提前生成次日目录 |
-| `predict --match wc2026-000` | — | 单场预测（调试用） |
+| `predict --all --simulate` | `--sims N`（默认 50000），`--date YYYY-MM-DD` | 预测全部 104 场 + 蒙特卡洛锦标赛模拟；必须指定 `--all` 或 `--match` 之一 |
+| `predict --match wc2026-000` | — | 单场预测（调试用）；与 `--all` 互斥 |
 | `publish [--date]` | — | 打包报告 → `site/data.json` |
 | `review` | `--sims N` | 赛后结算：补充结果、重预测、更新 P&L |
 | `market [--date]` | — | 打印夺冠赔率：模型 vs Polymarket + edge |

@@ -125,6 +125,10 @@ def _cmd_predict(args):
     if absences:
         print(f"[lineups] confirmed XI applied for {len(absences)} side(s) today")
 
+    if not args.match and not args.all:
+        print("predict: specify --all (full tournament) or --match <id>", file=sys.stderr)
+        sys.exit(1)
+
     if args.match:
         row = fixtures[fixtures["fixture_id"] == args.match]
         if row.empty:
