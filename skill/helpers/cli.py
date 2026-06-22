@@ -34,7 +34,7 @@ def _cmd_predict(args):
 
     results = data_loader.load_results()
     fixtures = data_loader.load_wc2026_fixtures()
-    as_of = pd.Timestamp.now().normalize()
+    as_of = pd.Timestamp(args.date).normalize() if getattr(args, "date", None) else pd.Timestamp.now().normalize()
     model = dc.fit(results, as_of=as_of)
     squads = data_loader.fetch_squads()
 
@@ -107,7 +107,7 @@ def _cmd_predict(args):
     # match-day confirmed XI (API-Football free tier): for TODAY's fixtures, players
     # benched/out drop from that match's scorer prediction. Empty until lineups publish
     # ~20-40 min before kickoff and until APIFOOTBALL_KEY is set — a no-op otherwise.
-    absences = _todays_lineup_absences(squads)
+    absences = _todays_lineup_absences(squads, date=getattr(args, "date", None))
     if absences:
         print(f"[lineups] confirmed XI applied for {len(absences)} side(s) today")
 
@@ -133,7 +133,7 @@ def _cmd_predict(args):
     gen = pd.Timestamp.now(tz="UTC").isoformat(timespec="seconds")
     for p in preds:
         p["_generated_at"] = gen
-    rep = paths.report_dir() / "predictions.json"
+    rep = paths.report_dir(getattr(args, "date", None)) / "predictions.json"
     rep.write_text(json.dumps(preds, indent=2, ensure_ascii=False, default=str))
     print(f"wrote {len(preds)} predictions -> {rep}")
 
@@ -162,7 +162,7 @@ def _cmd_predict(args):
 
         sim = montecarlo.run(model, fixtures, n=args.sims, squads=squads, context=ctx,
                              scorer_goals=scorer_goals)
-        (paths.report_dir() / "simulation.json").write_text(
+        (paths.report_dir(getattr(args, "date", None)) / "simulation.json").write_text(
             json.dumps(sim, indent=2, ensure_ascii=False)
         )
         top = list(sim["title_probability"].items())[:6]
@@ -178,15 +178,16 @@ def _cmd_predict(args):
         # deterministic most-likely bracket (出线树) — single projected path to a champion
         from ..sim import bracket as bracketmod
         bk = bracketmod.project(model, fixtures)
-        (paths.report_dir() / "bracket.json").write_text(
+        (paths.report_dir(getattr(args, "date", None)) / "bracket.json").write_text(
             json.dumps(bk, indent=2, ensure_ascii=False)
         )
         print(f"projected bracket champion: {bk['champion']}")
 
     # detail data for the dashboard's team/player search views
     tf, sq = _detail_payload(model, results, fixtures, squads, sim, talent, fc_team, injury_delta)
-    (paths.report_dir() / "team_factors.json").write_text(json.dumps(tf, ensure_ascii=False))
-    (paths.report_dir() / "squads_shares.json").write_text(json.dumps(sq, ensure_ascii=False))
+    _rdir = paths.report_dir(getattr(args, "date", None))
+    (_rdir / "team_factors.json").write_text(json.dumps(tf, ensure_ascii=False))
+    (_rdir / "squads_shares.json").write_text(json.dumps(sq, ensure_ascii=False))
 
 
 def _detail_payload(model, results, fixtures, squads, sim, talent=None, fc_team=None,
@@ -236,7 +237,7 @@ def _detail_payload(model, results, fixtures, squads, sim, talent=None, fc_team=
     return tf, sq
 
 
-def _todays_lineup_absences(squads: dict | None) -> dict:
+def _todays_lineup_absences(squads: dict | None, date: str | None = None) -> dict:
     """{(home, away): {team: {absent names}}} from today's confirmed XIs (API-Football),
     keyed by the SPECIFIC matchup (both orientations) — a confirmed XI applies only to
     THAT match, never to a team's other fixtures. {} without a key, pre-publish, or on
@@ -244,7 +245,7 @@ def _todays_lineup_absences(squads: dict | None) -> dict:
     if not squads:
         return {}
     try:
-        today = pd.Timestamp.now().strftime("%Y-%m-%d")
+        today = date or pd.Timestamp.now().strftime("%Y-%m-%d")
         lus = data_loader.fetch_apifootball_lineups(today)
         out = {}
         for (h, a), xi in lus.items():
@@ -1249,9 +1250,12 @@ def _cmd_bet(args):
     want_ah = mode in ("ah", "ahou", "all")
     want_ou = mode in ("ou", "ahou", "all")
 
+    target_date = rep.name  # YYYY-MM-DD of the requested report directory
     ops: list[kellymod.Opportunity] = []
     for p in preds:
         if p.get("error") or "derived" not in p:
+            continue
+        if p.get("date") != target_date:
             continue
         match = f"{p['home']} vs {p['away']}"
         if want_1x2 and p.get("market_1x2"):
@@ -1334,6 +1338,9 @@ def main(argv=None):
     pp.add_argument("--all", action="store_true")
     pp.add_argument("--simulate", action="store_true")
     pp.add_argument("--sims", type=int, default=50000)
+    pp.add_argument("--date", default=None,
+                    help="Report date (default: today). Use YYYY-MM-DD to pre-generate "
+                         "predictions for a future date (useful across time zones).")
     pp.set_defaults(func=_cmd_predict)
 
     pu = sub.add_parser("publish")

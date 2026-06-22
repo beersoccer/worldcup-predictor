@@ -41,6 +41,7 @@ cp .env.example .env
 
 ```bash
 # Step 1：赛前下午 — 拉取全量数据
+source .venv/bin/activate
 PYTHONPATH=. python -m skill.helpers.cli fetch --all
 
 # Step 2：生成预测（含 50k 蒙特卡洛模拟）
@@ -51,21 +52,25 @@ PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 10000
 
 # Step 4（可选）：发布到本地看板
 PYTHONPATH=. python -m skill.helpers.cli publish
-python3 -m http.server 8780 --directory site   # 浏览器打开 http://localhost:8780
+python -m http.server 8780 --directory site   # 浏览器打开 http://localhost:8780
 
 # Step 5：赛前 30 分钟再次更新（获取最新 Polymarket 价格 + 确认首发）
 PYTHONPATH=. python -m skill.helpers.cli fetch --all
 PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 10000
+
+# 跨时区提前准备：今晚提前为明日生成预测和下注建议
+PYTHONPATH=. python -m skill.helpers.cli predict --all --simulate --date 2026-06-22
+PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 10000 --date 2026-06-22
 ```
 
 ### 2.2 赛后结算（次日）
 
 ```bash
-# 自动回填结果、重新预测、更新 P&L
+# 一条命令完成所有工作：回填结果 + 重预测 + 重发布看板
 PYTHONPATH=. python -m skill.helpers.cli review
 ```
 
-`review` 会：拉取已完赛结果 → 重新预测剩余场次 → 更新看板（含累计 P&L、ROI、最大回撤）。
+`review` 内部依次执行：拉取最新比分 → 结算已完赛注单 → 重新跑 `predict --all --simulate` → 重新跑 `publish`。**不需要**再单独执行 `predict` 或 `publish`。
 
 ---
 
@@ -263,12 +268,12 @@ PYTHONPATH=. python -m skill.helpers.cli <subcommand> [args]
 | 子命令 | 参数 | 用途 |
 |---|---|---|
 | `fetch --all` | — | 拉取历史结果、赛程、阵容、赔率、天气、首发 |
-| `predict --all --simulate` | `--sims N`（默认 50000） | 预测全部 104 场 + 蒙特卡洛锦标赛模拟 |
+| `predict --all --simulate` | `--sims N`（默认 50000），`--date YYYY-MM-DD` | 预测全部 104 场 + 蒙特卡洛锦标赛模拟；`--date` 可提前生成次日目录 |
 | `predict --match wc2026-000` | — | 单场预测（调试用） |
 | `publish [--date]` | — | 打包报告 → `site/data.json` |
 | `review` | `--sims N` | 赛后结算：补充结果、重预测、更新 P&L |
 | `market [--date]` | — | 打印夺冠赔率：模型 vs Polymarket + edge |
-| `bet --bankroll N` | `--mode [ah\|1x2\|both]`，`--date` | 生成今日下注建议 |
+| `bet --bankroll N` | `--mode [ah\|ou\|ahou\|1x2\|all]`（默认 `ahou`），`--date` | 生成今日下注建议 |
 | `players --match <id>` | `--refresh` | 每场比赛可能进球的球员列表 |
 | `portraits [--topk N]` | — | 预下载球员头像到 `site/portraits/` |
 | `backtest` | `--start`，`--end`，`--xi`，`--markets` | Walk-forward 回测（1X2 或 AH/OU） |
