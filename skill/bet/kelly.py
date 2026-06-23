@@ -9,7 +9,9 @@ Discipline (per .claude/plans/optimization_backlog.md §9):
   * default fraction = 0.25 (quarter Kelly) — guards against parameter error
   * single-bet cap     = 5% of bankroll
   * portfolio cap      = 30% of bankroll across all simultaneous bets
-  * edge gate          = 3% (model prob − implied market prob) — below this we don't bet
+  * edge gate          = 5% (model prob − implied market prob) — industry best practice
+                         for estimated-probability models; 3% viable only with Pinnacle
+                         real odds + verified calibration
   * minimum stake      = 0.5% of bankroll — sub-noise signals dropped
 """
 from __future__ import annotations
@@ -21,7 +23,9 @@ from dataclasses import dataclass
 DEFAULT_KELLY_FRACTION = 0.25
 DEFAULT_MAX_PER_BET = 0.05      # 5% bankroll
 DEFAULT_MAX_TOTAL = 0.30        # 30% bankroll
-DEFAULT_EDGE_THRESHOLD = 0.03   # 3 percentage points
+DEFAULT_EDGE_THRESHOLD = 0.05   # 5% — industry best practice for models with estimated
+                                # (not true) probabilities; 3% viable only with Pinnacle
+                                # real odds + verified calibration (see docs/guide.md §5.5)
 DEFAULT_MIN_FRACTION = 0.005    # 0.5% bankroll
 
 # Per-market acceptance whitelist (FINDINGS.md Run 27 — P1.3).
