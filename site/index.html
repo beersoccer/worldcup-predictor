@@ -321,6 +321,10 @@ const I18N = {
     credRps:"Calibration · RPS", credBand:"bookmaker-grade",
     credSample:"Major matches", credNote:(n,a)=>`Walk-forward backtest across ${n} major-tournament matches (World Cup / Euro / Copa / AFCON), look-ahead free. ${a}% on a 3-way win/draw/loss call is near bookmaker level (random ≈ 33%). The live scoreboard below activates at kickoff (Jun 11) and scores every match against our pre-game forecast.`,
     resMatch:"Match", resPick:"Our pick", resActual:"Actual",
+    resAH:"AH pick", resAHActual:"AH result", resOU:"OU pick", resOUActual:"OU result",
+    ahHome:"home covers", ahAway:"away covers", ahPush:"push",
+    ouOver:"Over", ouUnder:"Under", ouPush:"push",
+    accAH:"AH accuracy", accOU:"OU accuracy",
     win:"Win", lose:"Lose", pscore:"P(score)", noimg:"no photo", rankN:(r,n)=>`#${r} / ${n}` },
   zh:{ title:"⚽ 2026 世界杯 — 预测",
     tag:"市场锚定集成模型 —— Dixon-Coles 比分模型 + ELO 实力评分,与博彩市场融合,并用蒙特卡洛模拟全部 104 场比赛。",
@@ -363,6 +367,10 @@ const I18N = {
     credRps:"概率校准 · RPS", credBand:"与博彩同档",
     credSample:"大赛样本", credNote:(n,a)=>`在 ${n} 场世界杯/欧洲杯/美洲杯/非洲杯等大赛上的滚动回测,无未来函数。胜平负三选一能命中 ${a}%,已接近博彩公司水平(瞎猜约 33%)。下方实时战绩看板将于 6/11 开赛启动,逐场对照我们的赛前预测打分。`,
     resMatch:"比赛", resPick:"我们的预测", resActual:"实际",
+    resAH:"让球预测", resAHActual:"让球结果", resOU:"大小球预测", resOUActual:"大小球结果",
+    ahHome:"主队赢盘", ahAway:"客队赢盘", ahPush:"走水",
+    ouOver:"大球", ouUnder:"小球", ouPush:"走水",
+    accAH:"让球准确率", accOU:"大小球准确率",
     win:"胜", lose:"负", pscore:"进球概率", noimg:"暂无照片", rankN:(r,n)=>`第${r}/${n}` }
 };
 /* ---------- team metadata: English name -> {iso, zh} ---------- */
@@ -495,9 +503,11 @@ function accBanner(el, la){
   const t=L();
   if(s.n){   // live: World Cup has kicked off — real results vs our forecast
     el.className="accb";
+    const ahTile = s.ah_n ? `<div class="grp"><div class="big ${s.ah_hit_rate>=0.5?'ok':''}">${(s.ah_hit_rate*100).toFixed(0)}%</div><div class="lab">${t.accAH} <span style="color:var(--mut)">${s.ah_correct}/${s.ah_n}</span></div></div>` : '';
+    const ouTile = s.ou_n ? `<div class="grp"><div class="big ${s.ou_hit_rate>=0.5?'ok':''}">${(s.ou_hit_rate*100).toFixed(0)}%</div><div class="lab">${t.accOU} <span style="color:var(--mut)">${s.ou_correct}/${s.ou_n}</span></div></div>` : '';
     el.innerHTML=`
-      <div class="grp"><div class="big ${s.hit_rate>=0.5?'ok':''}">${(s.hit_rate*100).toFixed(0)}%</div><div class="lab">${t.accHit}</div></div>
-      <div class="grp"><div class="big">${s.correct}/${s.n}</div><div class="lab">${t.accRec}</div></div>
+      <div class="grp"><div class="big ${s.hit_rate>=0.5?'ok':''}">${(s.hit_rate*100).toFixed(0)}%</div><div class="lab">${t.accHit} <span style="color:var(--mut)">${s.correct}/${s.n}</span></div></div>
+      ${ahTile}${ouTile}
       <div class="grp"><div class="big">${(s.mean_rps||0).toFixed(3)}</div><div class="lab">${t.accRps}</div></div>
       <div style="color:var(--mut);font-size:12.5px;flex:1;min-width:160px">${t.accNote}</div>`;
     return;
@@ -518,17 +528,46 @@ function accBanner(el, la){
   }
   el.className="accpending"; el.textContent=t.accStarts;   // fallback
 }
+function ahLabel(r, t){
+  if(!r.ah_line && r.ah_line!==0) return '<span style="color:var(--mut)">—</span>';
+  const sign = r.ah_line>0?"+":"";
+  const pickLbl = r.ah_pick==="home" ? t.ahHome : t.ahAway;
+  return `AH ${sign}${r.ah_line} · ${pickLbl} <span style="color:var(--mut)">${r.ah_pick_prob!=null?pct(r.ah_pick_prob):""}</span>`;
+}
+function ahActualLabel(r, t){
+  if(!r.ah_actual) return '<span style="color:var(--mut)">—</span>';
+  if(r.ah_actual==="push") return `<span style="color:var(--mut)">${t.ahPush}</span>`;
+  return r.ah_actual==="home" ? t.ahHome : t.ahAway;
+}
+function ouLabel(r, t){
+  if(!r.ou_line) return '<span style="color:var(--mut)">—</span>';
+  const pickLbl = r.ou_pick==="over" ? t.ouOver : t.ouUnder;
+  return `OU ${r.ou_line} · ${pickLbl} <span style="color:var(--mut)">${r.ou_pick_prob!=null?pct(r.ou_pick_prob):""}</span>`;
+}
+function ouActualLabel(r, t){
+  if(!r.ou_actual) return '<span style="color:var(--mut)">—</span>';
+  if(r.ou_actual==="push") return `<span style="color:var(--mut)">${t.ouPush}</span>`;
+  return r.ou_actual==="over" ? t.ouOver : t.ouUnder;
+}
 function accTable(el, la){
   const rows=(la&&la.results)||[];
   document.getElementById("h-acc").style.display = rows.length?"flex":"none";
   if(!rows.length){ el.innerHTML=""; return; }
-  el.innerHTML="<tr><th></th><th>"+L().resMatch+"</th><th>"+L().resActual+"</th><th>"+L().resPick+"</th></tr>"+
-    [...rows].reverse().slice(0,40).map(r=>`<tr>
+  const t=L();
+  el.innerHTML=`<tr><th></th><th>${t.resMatch}</th><th>${t.resActual}</th><th>${t.resPick}</th><th>${t.resAH}</th><th>${t.resAHActual}</th><th>${t.resOU}</th><th>${t.resOUActual}</th></tr>`+
+    [...rows].reverse().slice(0,40).map(r=>{
+      const ahOk = r.ah_correct, ahNA = r.ah_actual===undefined||r.ah_actual==="push"||r.ah_actual===null;
+      const ouOk = r.ou_correct, ouNA = r.ou_actual===undefined||r.ou_actual==="push"||r.ou_actual===null;
+      return `<tr>
       <td>${r.correct?'<span class="ok">✓</span>':'<span class="no">✗</span>'}</td>
       <td><span class="tcell">${flag(r.home)}${tName(r.home)} <b>${r.score}</b> ${tName(r.away)}${flag(r.away)}</span><div style="color:var(--mut);font-size:11px">${r.date}</div></td>
       <td>${actLabel(r.actual,r.home,r.away)}</td>
       <td class="${r.correct?'ok':'no'}">${actLabel(r.pick,r.home,r.away)} <span style="color:var(--mut)">${pct(r.pick_prob)}</span></td>
-    </tr>`).join("");
+      <td class="${ahNA?'':''}"> ${ahLabel(r,t)}</td>
+      <td class="${ahNA?'':ahOk?'ok':'no'}">${ahActualLabel(r,t)}</td>
+      <td>${ouLabel(r,t)}</td>
+      <td class="${ouNA?'':ouOk?'ok':'no'}">${ouActualLabel(r,t)}</td>
+    </tr>`;}).join("");
 }
 function actLabel(s,h,a){ // localise "X win"/"Draw"
   if(s==="Draw") return LANG==="zh"?"平":"Draw";
