@@ -715,9 +715,11 @@ def _accuracy_payload() -> dict:
 
     Forecast selection (incl. the no-hindsight guard) lives in `_prekickoff_predictions`.
     Marks the 1X2 pick correct/wrong and aggregates accuracy-to-date (hit rate, RPS).
+    Also records the pre-kickoff AH and OU main-line picks vs actual outcome.
     Empty until the tournament starts.
     """
     from ..backtest import metrics
+    from ..model import derived_markets as derived
 
     res = data_loader.fetch_historical()
     played = res[(res["tournament"] == paths.WC2026_TOURNAMENT)
@@ -736,15 +738,57 @@ def _accuracy_payload() -> dict:
         pick = int(np.argmax(probs))
         outcome = metrics.outcome_index(int(r.home_score), int(r.away_score))
         correct = pick == outcome
+        home_score, away_score = int(r.home_score), int(r.away_score)
         rec = {
             "date": key[0], "home": r.home_team, "away": r.away_team,
-            "score": f"{int(r.home_score)}-{int(r.away_score)}",
+            "score": f"{home_score}-{away_score}",
             "pick": labels(r.home_team, r.away_team)[pick],
             "pick_prob": round(float(probs[pick]), 3),
             "actual": labels(r.home_team, r.away_team)[outcome],
             "correct": bool(correct),
             "rps": round(metrics.rps(probs, outcome), 4),
         }
+        # AH main line: round-to-half(-(λ_h - λ_a)), clipped [-3, +3]
+        lam_h = float(p.get("lambda_home", 0) or 0)
+        lam_a = float(p.get("lambda_away", 0) or 0)
+        if lam_h > 0 and lam_a > 0:
+            ah_line = max(-3.0, min(3.0, derived.round_to_half(-(lam_h - lam_a))))
+            margin = home_score - away_score
+            ah_adj = margin + ah_line
+            if ah_adj > 0:
+                ah_actual = "home"
+            elif ah_adj < 0:
+                ah_actual = "away"
+            else:
+                ah_actual = "push"
+            # model's p_home on the main line (from pre-kickoff derived grid)
+            ah_entries = (p.get("derived") or {}).get("asian_handicap") or []
+            ah_entry = next((e for e in ah_entries if abs(e["line"] - ah_line) < 0.01), None)
+            ah_p_home = round(float(ah_entry["p_home"]), 3) if ah_entry else None
+            rec["ah_line"] = ah_line
+            rec["ah_pick"] = "home" if (ah_p_home or 0) >= 0.5 else "away"
+            rec["ah_pick_prob"] = ah_p_home
+            rec["ah_actual"] = ah_actual
+            rec["ah_correct"] = ah_actual != "push" and rec["ah_pick"] == ah_actual
+
+            # OU main line: round-to-half(λ_h + λ_a), clipped [1.5, 4.5]
+            ou_line = max(1.5, min(4.5, derived.round_to_half(lam_h + lam_a)))
+            total = home_score + away_score
+            if total > ou_line:
+                ou_actual = "over"
+            elif total < ou_line:
+                ou_actual = "under"
+            else:
+                ou_actual = "push"
+            ou_entries = (p.get("derived") or {}).get("over_under") or []
+            ou_entry = next((e for e in ou_entries if abs(e["line"] - ou_line) < 0.01), None)
+            ou_p_over = round(float(ou_entry["p_over"]), 3) if ou_entry else None
+            rec["ou_line"] = ou_line
+            rec["ou_pick"] = "over" if (ou_p_over or 0) >= 0.5 else "under"
+            rec["ou_pick_prob"] = ou_p_over
+            rec["ou_actual"] = ou_actual
+            rec["ou_correct"] = ou_actual != "push" and rec["ou_pick"] == ou_actual
+
         rows.append(rec)
         by_match[f"{key[0]}|{r.home_team}|{r.away_team}"] = {
             "score": rec["score"], "correct": rec["correct"], "actual_idx": outcome}
@@ -755,6 +799,16 @@ def _accuracy_payload() -> dict:
         summary["hit_rate"] = round(summary["correct"] / len(rows), 4)
         summary["mean_rps"] = round(float(np.mean([x["rps"] for x in rows])), 4)
         summary["drift"] = _drift_gate([x["rps"] for x in rows])
+        ah_rows = [x for x in rows if x.get("ah_actual") not in (None, "push")]
+        if ah_rows:
+            summary["ah_correct"] = sum(1 for x in ah_rows if x.get("ah_correct"))
+            summary["ah_n"] = len(ah_rows)
+            summary["ah_hit_rate"] = round(summary["ah_correct"] / len(ah_rows), 4)
+        ou_rows = [x for x in rows if x.get("ou_actual") not in (None, "push")]
+        if ou_rows:
+            summary["ou_correct"] = sum(1 for x in ou_rows if x.get("ou_correct"))
+            summary["ou_n"] = len(ou_rows)
+            summary["ou_hit_rate"] = round(summary["ou_correct"] / len(ou_rows), 4)
     return {"summary": summary, "results": rows, "by_match": by_match}
 
 
