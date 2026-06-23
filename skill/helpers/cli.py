@@ -1384,7 +1384,21 @@ def _cmd_bet(args):
     # on the same match both require home to win by a large margin).
     # AH and OU are orthogonal markets and may coexist within the same match.
     ops = _best_line_per_market_type(ops)
-    out = kellymod.portfolio_kelly(ops, bankroll=args.bankroll)
+    edge_threshold = args.edge_threshold if args.edge_threshold is not None else kellymod.DEFAULT_EDGE_THRESHOLD
+    max_bets = args.max_bets  # default 10; enforced after Kelly sizing by dropping lowest-edge bets
+    out = kellymod.portfolio_kelly(ops, bankroll=args.bankroll, edge_threshold=edge_threshold)
+    # Enforce per-day bet cap: keep top-N by edge, drop the rest.
+    if len(out) > max_bets:
+        out = sorted(out, key=lambda r: -r["edge"])[:max_bets]
+        # Re-run portfolio cap after trimming so total fraction stays correct.
+        total_f = sum(r["kelly_fraction"] for r in out)
+        if total_f > kellymod.DEFAULT_MAX_TOTAL:
+            scale = kellymod.DEFAULT_MAX_TOTAL / total_f
+            for r in out:
+                r["kelly_fraction"] = round(r["kelly_fraction"] * scale, 4)
+                r["scaled_for_portfolio"] = True
+                r["stake"] = round(args.bankroll * r["kelly_fraction"], 2)
+        out.sort(key=lambda r: -r["stake"])
 
     bets_dir = paths.REPORTS / "bets"
     bets_dir.mkdir(exist_ok=True)
@@ -1395,14 +1409,15 @@ def _cmd_bet(args):
             "fraction": kellymod.DEFAULT_KELLY_FRACTION,
             "max_per_bet": kellymod.DEFAULT_MAX_PER_BET,
             "max_total": kellymod.DEFAULT_MAX_TOTAL,
-            "edge_threshold": kellymod.DEFAULT_EDGE_THRESHOLD,
+            "edge_threshold": edge_threshold,
+            "max_bets": max_bets,
         },
         "bets": out,
     }, indent=2, ensure_ascii=False))
 
     if not out:
         print(f"no bets meet the discipline gates "
-              f"(edge ≥ {kellymod.DEFAULT_EDGE_THRESHOLD:.0%}, "
+              f"(edge ≥ {edge_threshold:.0%}, "
               f"fraction ≥ {kellymod.DEFAULT_MIN_FRACTION:.1%}). Slate empty.")
         print(f"logged → {log_f}")
         return
@@ -1483,6 +1498,14 @@ def main(argv=None):
                       choices=["ah", "ou", "ahou", "1x2", "all"],
                       help="Markets to recommend: ahou (default; AH + OU), "
                            "ah, ou, 1x2, or all")
+    pbet.add_argument("--edge", type=float, default=None, dest="edge_threshold",
+                      metavar="EDGE",
+                      help="Minimum edge to bet (default: 0.05 = 5%%). "
+                           "Industry best practice for estimated-probability models.")
+    pbet.add_argument("--max-bets", type=int, default=10, dest="max_bets",
+                      metavar="N",
+                      help="Maximum number of bets per day (default: 10). "
+                           "Bets are ranked by edge; lowest-edge bets dropped first.")
     pbet.set_defaults(func=_cmd_bet)
 
     pb = sub.add_parser("backtest")

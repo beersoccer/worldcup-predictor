@@ -14,6 +14,24 @@ removed, or has its weight changed (cross-references `reports/backtests/FINDINGS
 ## [Unreleased]
 
 ### Added
+- **`bet --edge EDGE`** CLI parameter. Overrides the default edge gate per
+  invocation (e.g. `--edge 0.03` to inspect more candidates without changing
+  the default). Useful for diagnostics when the slate is empty.
+- **`bet --max-bets N`** CLI parameter (default 10). After Kelly sizing,
+  keeps only the top-N bets ranked by edge and drops the rest. Re-applies
+  the 30% portfolio cap after trimming. Prevents multi-match days from
+  producing dozens of sub-noise stakes when many fixtures pass the edge gate.
+
+### Changed
+- **Default `edge_threshold` raised from 3% to 5%** (`DEFAULT_EDGE_THRESHOLD`
+  in `skill/bet/kelly.py`). Industry best practice for models with estimated
+  (not true) probabilities: at 3% the signal-to-noise ratio is too low when
+  AH/OU odds are modelled fair prices rather than real Pinnacle lines. Lower
+  back to 3% via `--edge 0.03` once Pinnacle real odds are integrated (P0.2b).
+
+---
+
+### Added
 - **API-Football live injury feed** (`data_loader.fetch_apifootball_injuries`).
   On each `predict` run, queries the `/injuries` endpoint for the target date,
   merges results with the static `injuries_wc2026.json`, and de-duplicates by
