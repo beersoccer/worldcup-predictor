@@ -253,7 +253,118 @@ Walk-forward 在 231 场实际点球上证明：强度加权方案 Brier=0.2683�
 | Edge 门槛 | 3% | 低于此不下注 |
 | 最小注额 | 本金 0.5% | 信号太弱的注单丢弃 |
 
-### 5.2 建议执行原则
+### 5.2 下注金额计算详解
+
+每笔注单的 stake 经过四步流水线（代码：`skill/bet/kelly.py:portfolio_kelly`）：
+
+**第一步：全 Kelly 公式**
+
+```
+f* = (b·p − q) / b
+其中 b = decimal_odds − 1，q = 1 − p_win
+```
+
+**第二步：缩为 1/4 Kelly**
+
+```
+f = f* × 0.25
+```
+
+1/4 Kelly 的意义：模型概率是估计值，不是真值。理论研究表明，当概率估计偏高 x%，
+full Kelly 会造成约 2x% 的额外回撤；缩为 1/4 是在误差保护与增长率之间取的保守平衡点。
+
+**具体数值例子：**
+
+| 参数 | 值 |
+|---|---|
+| p_win（模型） | 0.623 |
+| decimal_odds | 1.847 |
+| b = 1.847−1 | 0.847 |
+| full Kelly f* | (0.847×0.623 − 0.377) / 0.847 = **17.8%** |
+| 1/4 Kelly f | 17.8% × 0.25 = **4.45%** |
+| 单注上限 | 5%（未触发） |
+| stake（本金 1500） | **66.75** |
+
+**第三步：三道截断**
+
+1. `f = min(f, 5%)` — 单注上限，防止单注过大
+2. `f < 0.5%` 则丢弃 — 信号太弱，噪音大于期望
+3. 所有同日注单 kelly_fraction 之和 > 30% → 等比例缩减至 30%
+
+**第四步：`stake = bankroll × kelly_fraction`**
+
+### 5.3 AH / OU / 1X2 盘口结算机制
+
+盘口结算在 `skill/helpers/cli.py:_betting_payload` 中按真实比分精确计算，逻辑如下：
+
+**1X2（胜平负）**
+```
+actual = "home" | "draw" | "away"（按真实比分）
+won = (side == actual)
+payout = stake × (odds − 1)   # 赢
+payout = −stake                # 输
+```
+
+**AH（让球盘）**
+```
+adjusted = (home_score − away_score) + line
+
+side == "home": won = adjusted > 0，push = adjusted == 0
+side == "away": won = adjusted < 0，push = adjusted == 0
+
+push（仅整数线才出现，半球线不可能走水）：payout = 0（退本金）
+赢：payout = stake × (odds − 1)
+输：payout = −stake
+```
+
+**OU（大小盘）**
+```
+total = home_score + away_score
+
+push = (total == line)   # 仅整数线可走水
+over_wins = total > line
+won = over_wins（买大）或 not over_wins（买小）
+push：payout = 0；赢：payout = stake × (odds − 1)；输：payout = −stake
+```
+
+### 5.4 ROI 与看板 P&L 的局限性
+
+**ROI 计算：**
+```
+ROI = total_pnl / total_stake
+```
+逐日按真实比分结算，累计。
+
+**重要局限：当前 AH/OU 赔率是模型公允价，不是真实市场赔率。**
+
+原因：Pinnacle 历史 AH/OU 存档需 The Odds API Business 档（~$99/月），
+尚未接入（P0.2b 待办）。因此：
+
+- 看板显示的 AH/OU P&L 是"若以模型公允价成交"的模拟盈亏，**非真实市场 ROI**
+- 真实 edge 可能低于模型估算（市场在 AH/OU 上通常比 1X2 更有效）
+- 接入 Pinnacle 实盘后，ROI 才具备真实参考价值
+
+### 5.5 仓位翻倍分析（1/4 Kelly → 1/2 Kelly）
+
+| 指标 | 1/4 Kelly（当前） | 1/2 Kelly（翻倍） |
+|---|---|---|
+| 期望增长率（相对全 Kelly） | ~75% | ~87.5% |
+| 理论破产概率 | ≈0 | ≈0（分数≤1 时均安全） |
+| 预期最大回撤 | ~15–20% | ~30–40% |
+| 参数误差放大 | 最小 | 中等 |
+| 单注上限 | 5% | 需同步升至 10%（否则截断抵消翻倍） |
+| 总仓位上限 | 30% | 需同步升至 60% |
+
+**结论：在当前阶段维持 1/4 Kelly。**
+
+翻倍的前提条件尚不满足：
+1. **AH/OU 赔率来自模型公允价，不是真实 Pinnacle 盘口。** 真实 edge 未知，基于虚高 edge 放大仓位会成倍放大风险。
+2. **实盘验证样本不足。** 研究文献建议"20+ 注实证 edge ≥ 5% 后，可考虑升至 1/3 Kelly"。翻到 1/2 Kelly 需要更大样本。
+
+**合理升级路径：** 接入 Pinnacle 真实 AH/OU 赔率（P0.2b）并积累 30+ 注实证数据后，
+若真实 ROI ≥ 5%，可将 Kelly 分数从 1/4 升至 1/3，同步将单注上限从 5% 升至 7%。
+
+### 5.6 建议执行原则
 
 1. **严格按 stake 执行**，不因"手感"加减仓
 2. **赛前 30 分钟最后一次 `fetch`**，确保 Polymarket 价格是最新的
@@ -367,6 +478,12 @@ A: Walk-forward 在 231 场实际点球上验证，任何基于球队强度的�
 **Q: 如何查看历史下注的盈亏？**  
 A: 运行 `review` 后，看板的"Betting"面板会显示累计 P&L、ROI 和最大回撤。
 或直接读 `reports/bets/` 目录下各日期的 JSON 文件。
+
+**Q: 看板上的 AH/OU P&L 是真实盈亏吗？**  
+A: **不是真实市场盈亏**，是模拟值。当前 AH/OU 赔率来自模型自算的公允价（DC 得分矩阵反解），而非 Pinnacle 实盘赔率。接入 The Odds API Pinnacle 真实盘口（P0.2b）后，P&L 才具备真实参考价值。1X2 的赔率同样来自 Polymarket/Kalshi 去佣后的公允价。详见 §5.4。
+
+**Q: 为什么不把 Kelly 分数翻倍以提高收益？**  
+A: 翻倍（1/4→1/2 Kelly）的前提是真实 edge 已验证充分。当前 AH/OU 赔率是模型公允价而非真实市场赔率，真实 edge 未知；加之实盘样本尚不足 20 注。基于未验证的 edge 放大仓位会成倍放大回撤风险。接入 Pinnacle 真实盘口并积累 30+ 注实证数据后，若 ROI ≥ 5%，可考虑升至 1/3 Kelly。详见 §5.5。
 
 **Q: 出现 `[clubelo] primary API unavailable` 警告怎么办？**  
 A: 正常现象，`api.clubelo.com` 服务器偶发宕机。系统会自动切换到 GitHub 镜像数据（895 支俱乐部，最新至 2025-06-01），talent 层仍然工作，预测结果基本不受影响。无需手动干预；等官方 API 恢复后下一次 `fetch --all` 会自动更新本地缓存。
