@@ -26,6 +26,10 @@ removed, or has its weight changed (cross-references `reports/backtests/FINDINGS
   Prevents correlated nested bets (e.g. AH −1.5 and AH −2.5 on the same match).
   Default is off — all lines above the edge threshold are shown so the user can
   choose manually.
+- **Grouped bet output**. `bet` now prints all lines for the same match together,
+  separated by a blank line. Matches are ordered by their highest edge (best
+  opportunity first); lines within each match are ordered by edge descending.
+  A horizontal rule separates bets from the TOTAL line.
 
 ### Changed
 - **Default `edge_threshold` raised from 3% to 6%** (`DEFAULT_EDGE_THRESHOLD`
