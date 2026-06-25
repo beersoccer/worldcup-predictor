@@ -90,8 +90,8 @@ PYTHONPATH=. python -m skill.helpers.cli bet [选项]
 | `--mode` | `ahou` | 推荐市场，见下表 |
 | `--date` | 今日 | 指定预测日期，格式 `YYYY-MM-DD` |
 | `--edge` | 0.06 | 最低 edge 门槛，低于此不输出；可临时调低观察更多候选 |
-| `--max-bets` | 10 | 每日最多输出 N 条，按 edge 降序截断 |
-| `--all-lines` | 关闭 | 显示每场所有线条（禁用最优线过滤），由用户自行选择下注 |
+| `--max-bets` | 无限制 | 设置后只输出 edge 最高的 N 条，不设则显示全部超过门槛的注单 |
+| `--best-line` | 关闭 | 启用后每场每类市场只保留 edge 最高的一条（防相关嵌套下注），默认关闭 |
 
 ### 3.2 五种模式对比
 
@@ -391,7 +391,7 @@ PYTHONPATH=. python -m skill.helpers.cli <subcommand> [args]
 | `publish [--date]` | — | 打包报告 → `site/data.json` |
 | `review` | `--sims N` | 赛后结算：补充结果、重预测、更新 P&L |
 | `market [--date]` | — | 打印夺冠赔率：模型 vs Polymarket + edge |
-| `bet --bankroll N` | `--mode [ah\|ou\|ahou\|1x2\|all]`（默认 `ahou`），`--date`，`--edge`（默认 0.06），`--max-bets`（默认 10），`--all-lines` | 生成今日下注建议 |
+| `bet --bankroll N` | `--mode [ah\|ou\|ahou\|1x2\|all]`（默认 `ahou`），`--date`，`--edge`（默认 0.06），`--max-bets N`，`--best-line` | 生成今日下注建议 |
 | `players --match <id>` | `--refresh` | 每场比赛可能进球的球员列表 |
 | `portraits [--topk N]` | — | 预下载球员头像到 `site/portraits/` |
 | `backtest` | `--start`，`--end`，`--xi`，`--markets` | Walk-forward 回测（1X2 或 AH/OU） |
