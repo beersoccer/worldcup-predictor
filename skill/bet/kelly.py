@@ -23,9 +23,9 @@ from dataclasses import dataclass
 DEFAULT_KELLY_FRACTION = 0.25
 DEFAULT_MAX_PER_BET = 0.05      # 5% bankroll
 DEFAULT_MAX_TOTAL = 0.30        # 30% bankroll
-DEFAULT_EDGE_THRESHOLD = 0.05   # 5% — industry best practice for models with estimated
-                                # (not true) probabilities; 3% viable only with Pinnacle
-                                # real odds + verified calibration (see docs/guide.md §5.5)
+DEFAULT_EDGE_THRESHOLD = 0.06   # 6% — conservative default for estimated-probability
+                                # models without real Pinnacle AH/OU odds; use --edge to
+                                # override (see docs/guide.md §5.5)
 DEFAULT_MIN_FRACTION = 0.005    # 0.5% bankroll
 
 # Per-market acceptance whitelist (FINDINGS.md Run 27 — P1.3).

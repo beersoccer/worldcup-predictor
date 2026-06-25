@@ -89,6 +89,9 @@ PYTHONPATH=. python -m skill.helpers.cli bet [选项]
 | `--bankroll` | 10000 | 当前本金（任意单位，输出 stake 与之成比例） |
 | `--mode` | `ahou` | 推荐市场，见下表 |
 | `--date` | 今日 | 指定预测日期，格式 `YYYY-MM-DD` |
+| `--edge` | 0.06 | 最低 edge 门槛，低于此不输出；可临时调低观察更多候选 |
+| `--max-bets` | 10 | 每日最多输出 N 条，按 edge 降序截断 |
+| `--all-lines` | 关闭 | 显示每场所有线条（禁用最优线过滤），由用户自行选择下注 |
 
 ### 3.2 五种模式对比
 
@@ -127,7 +130,7 @@ logged → reports/bets/2026-06-20.json
 | `Bet` | 比赛 · 市场类型 · 方向（home/away/draw） |
 | `p_win` | 模型估算的赢盘概率（DC + 上下文层 + 市场锚定） |
 | `odds` | 市场隐含赔率（1 / 市场隐含概率，无佣金） |
-| `edge` | 模型概率 − 市场隐含概率；≥ 5% 才会进入建议（业界最佳实践，见 §5.1） |
+| `edge` | 模型概率 − 市场隐含概率；≥ 6% 才会进入建议（默认，可用 `--edge` 覆盖，见 §5.1） |
 | `stake` | 建议押注金额（按 1/4 Kelly 计算，已受单注 5% 上限约束） |
 
 **AH 方向解读：**
@@ -250,7 +253,7 @@ Walk-forward 在 231 场实际点球上证明：强度加权方案 Brier=0.2683�
 | Kelly 分数 | 1/4（25%） | 全 Kelly 风险太大，缩为 1/4 保守执行 |
 | 单注上限 | 本金 5% | 防止单笔大赌 |
 | 总仓位上限 | 本金 30% | 同日多注合并不超过 30% |
-| Edge 门槛 | 5%（默认） | 业界最佳实践：估计概率模型需 ≥5% 才有正期望；可用 `--edge` 覆盖 |
+| Edge 门槛 | 6%（默认） | 无真实 Pinnacle 盘口时的保守值；可用 `--edge` 覆盖 |
 | 每日注数上限 | 10（默认） | 按 edge 降序保留最优 N 条；可用 `--max-bets` 覆盖 |
 | 最小注额 | 本金 0.5% | 信号太弱的注单丢弃 |
 
@@ -388,7 +391,7 @@ PYTHONPATH=. python -m skill.helpers.cli <subcommand> [args]
 | `publish [--date]` | — | 打包报告 → `site/data.json` |
 | `review` | `--sims N` | 赛后结算：补充结果、重预测、更新 P&L |
 | `market [--date]` | — | 打印夺冠赔率：模型 vs Polymarket + edge |
-| `bet --bankroll N` | `--mode [ah\|ou\|ahou\|1x2\|all]`（默认 `ahou`），`--date`，`--edge`（默认 0.05），`--max-bets`（默认 10） | 生成今日下注建议 |
+| `bet --bankroll N` | `--mode [ah\|ou\|ahou\|1x2\|all]`（默认 `ahou`），`--date`，`--edge`（默认 0.06），`--max-bets`（默认 10），`--all-lines` | 生成今日下注建议 |
 | `players --match <id>` | `--refresh` | 每场比赛可能进球的球员列表 |
 | `portraits [--topk N]` | — | 预下载球员头像到 `site/portraits/` |
 | `backtest` | `--start`，`--end`，`--xi`，`--markets` | Walk-forward 回测（1X2 或 AH/OU） |
@@ -460,7 +463,7 @@ PYTHONPATH=. python -m skill.helpers.cli <subcommand> [args]
 ## 10. 常见问题
 
 **Q: `bet` 命令输出"Slate empty"，没有推荐？**  
-A: 两种原因：(1) 当日比赛无 Polymarket 报价（AH 的市场锚点来自 1X2，而 1X2 需要 Polymarket）；(2) 所有比赛的 edge 都低于门槛（默认 5%）。先跑 `fetch --all` 确认有市场数据，或用 `market` 命令检查。也可用 `--edge 0.03` 临时降低门槛观察候选注单。
+A: 两种原因：(1) 当日比赛无 Polymarket 报价（AH 的市场锚点来自 1X2，而 1X2 需要 Polymarket）；(2) 所有比赛的 edge 都低于门槛（默认 6%）。先跑 `fetch --all` 确认有市场数据，或用 `market` 命令检查。也可用 `--edge 0.05` 临时降低门槛观察候选注单。
 
 **Q: 为什么默认是 `--mode ahou`？**  
 A: 主流亚洲盘口同时提供让球盘和大小盘三栏式（输赢盘/让球盘/大小盘），

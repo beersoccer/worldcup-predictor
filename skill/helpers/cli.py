@@ -1382,8 +1382,9 @@ def _cmd_bet(args):
     # Per-match per-market-type: keep only the highest-edge line to avoid staking
     # multiple nested correlated bets on the same side (e.g. AH -1.5 + AH -2.5
     # on the same match both require home to win by a large margin).
-    # AH and OU are orthogonal markets and may coexist within the same match.
-    ops = _best_line_per_market_type(ops)
+    # Bypass with --all-lines to see every line and choose manually.
+    if not getattr(args, "all_lines", False):
+        ops = _best_line_per_market_type(ops)
     edge_threshold = args.edge_threshold if args.edge_threshold is not None else kellymod.DEFAULT_EDGE_THRESHOLD
     max_bets = args.max_bets  # default 10; enforced after Kelly sizing by dropping lowest-edge bets
     out = kellymod.portfolio_kelly(ops, bankroll=args.bankroll, edge_threshold=edge_threshold)
@@ -1506,6 +1507,10 @@ def main(argv=None):
                       metavar="N",
                       help="Maximum number of bets per day (default: 10). "
                            "Bets are ranked by edge; lowest-edge bets dropped first.")
+    pbet.add_argument("--all-lines", action="store_true", dest="all_lines",
+                      help="Show all lines per match (disable the best-line-per-market "
+                           "filter). Useful for manual selection. Correlated nested bets "
+                           "are still your responsibility to avoid.")
     pbet.set_defaults(func=_cmd_bet)
 
     pb = sub.add_parser("backtest")
