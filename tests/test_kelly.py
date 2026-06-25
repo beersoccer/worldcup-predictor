@@ -33,12 +33,12 @@ def test_edge_calculation():
 
 
 def test_portfolio_drops_below_threshold():
-    """edge < 3% should be filtered out."""
+    """edge below threshold should be filtered out; pass explicit threshold for stability."""
     ops = [
         Opportunity("low edge", p_win=0.51, decimal_odds=2.0),  # edge = 1%
         Opportunity("good edge", p_win=0.55, decimal_odds=2.0),  # edge = 5%
     ]
-    out = portfolio_kelly(ops, bankroll=10000)
+    out = portfolio_kelly(ops, bankroll=10000, edge_threshold=0.03)
     labels = [r["label"] for r in out]
     assert "low edge" not in labels
     assert "good edge" in labels

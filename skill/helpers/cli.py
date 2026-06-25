@@ -1379,18 +1379,18 @@ def _cmd_bet(args):
             ops.extend(_ah_opportunities(p, match, kellymod))
         if want_ou:
             ops.extend(_ou_opportunities(p, match, kellymod))
-    # Per-match per-market-type: keep only the highest-edge line to avoid staking
-    # multiple nested correlated bets on the same side (e.g. AH -1.5 + AH -2.5
-    # on the same match both require home to win by a large margin).
-    # AH and OU are orthogonal markets and may coexist within the same match.
-    ops = _best_line_per_market_type(ops)
+    # Line filter: default shows all lines above edge threshold (user selects manually).
+    # --best-line keeps only the highest-edge line per (match, market_type) to avoid
+    # staking correlated nested bets (e.g. AH -1.5 + AH -2.5 same match same direction).
+    if getattr(args, "best_line", False):
+        ops = _best_line_per_market_type(ops)
     edge_threshold = args.edge_threshold if args.edge_threshold is not None else kellymod.DEFAULT_EDGE_THRESHOLD
-    max_bets = args.max_bets  # default 10; enforced after Kelly sizing by dropping lowest-edge bets
     out = kellymod.portfolio_kelly(ops, bankroll=args.bankroll, edge_threshold=edge_threshold)
-    # Enforce per-day bet cap: keep top-N by edge, drop the rest.
-    if len(out) > max_bets:
+    # Optional top-N cap: when --max-bets N is given, keep only the N highest-edge bets.
+    max_bets = getattr(args, "max_bets", None)
+    if max_bets is not None and len(out) > max_bets:
         out = sorted(out, key=lambda r: -r["edge"])[:max_bets]
-        # Re-run portfolio cap after trimming so total fraction stays correct.
+        # Re-apply portfolio cap after trimming.
         total_f = sum(r["kelly_fraction"] for r in out)
         if total_f > kellymod.DEFAULT_MAX_TOTAL:
             scale = kellymod.DEFAULT_MAX_TOTAL / total_f
@@ -1410,6 +1410,7 @@ def _cmd_bet(args):
             "max_per_bet": kellymod.DEFAULT_MAX_PER_BET,
             "max_total": kellymod.DEFAULT_MAX_TOTAL,
             "edge_threshold": edge_threshold,
+            "best_line": getattr(args, "best_line", False),
             "max_bets": max_bets,
         },
         "bets": out,
@@ -1502,10 +1503,14 @@ def main(argv=None):
                       metavar="EDGE",
                       help="Minimum edge to bet (default: 0.05 = 5%%). "
                            "Industry best practice for estimated-probability models.")
-    pbet.add_argument("--max-bets", type=int, default=10, dest="max_bets",
+    pbet.add_argument("--max-bets", type=int, default=None, dest="max_bets",
                       metavar="N",
-                      help="Maximum number of bets per day (default: 10). "
-                           "Bets are ranked by edge; lowest-edge bets dropped first.")
+                      help="Cap output at top-N bets ranked by edge (default: no cap). "
+                           "All bets above --edge are shown unless this is set.")
+    pbet.add_argument("--best-line", action="store_true", dest="best_line",
+                      help="Keep only the highest-edge line per (match, market type). "
+                           "Prevents correlated nested bets (e.g. AH -1.5 + AH -2.5 "
+                           "same match). Default: off — all lines above --edge are shown.")
     pbet.set_defaults(func=_cmd_bet)
 
     pb = sub.add_parser("backtest")
