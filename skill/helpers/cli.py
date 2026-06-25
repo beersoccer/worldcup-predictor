@@ -1400,18 +1400,6 @@ def _cmd_bet(args):
                 r["stake"] = round(args.bankroll * r["kelly_fraction"], 2)
         out.sort(key=lambda r: -r["stake"])
 
-    # Re-sort: group by match, matches ordered by their best edge descending,
-    # rows within each match ordered by edge descending.
-    def _match_from_label(label: str) -> str:
-        return label.split(" · ")[0]
-
-    match_best_edge: dict[str, float] = {}
-    for r in out:
-        m = _match_from_label(r["label"])
-        if r["edge"] > match_best_edge.get(m, -1):
-            match_best_edge[m] = r["edge"]
-    out.sort(key=lambda r: (-match_best_edge[_match_from_label(r["label"])], _match_from_label(r["label"]), -r["edge"]))
-
     bets_dir = paths.REPORTS / "bets"
     bets_dir.mkdir(exist_ok=True)
     log_f = bets_dir / f"{rep.name}.json"
@@ -1436,15 +1424,9 @@ def _cmd_bet(args):
         return
     total = sum(r["stake"] for r in out)
     print(f"{'Bet':<60}{'p_win':>8}{'odds':>7}{'edge':>8}{'stake':>10}")
-    prev_match = None
     for r in out:
-        cur_match = _match_from_label(r["label"])
-        if prev_match is not None and cur_match != prev_match:
-            print()
-        prev_match = cur_match
         print(f"{r['label'][:58]:<60}{r['p_win']:>8.3f}{r['decimal_odds']:>7.2f}"
               f"{r['edge']*100:>7.1f}%{r['stake']:>10.2f}")
-    print(f"\n{'─'*93}")
     print(f"{'TOTAL':<60}{'':>8}{'':>7}{'':>8}{total:>10.2f}")
     print(f"\nlogged → {log_f}")
 
