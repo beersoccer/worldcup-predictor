@@ -17,17 +17,26 @@ removed, or has its weight changed (cross-references `reports/backtests/FINDINGS
 - **`bet --edge EDGE`** CLI parameter. Overrides the default edge gate per
   invocation (e.g. `--edge 0.03` to inspect more candidates without changing
   the default). Useful for diagnostics when the slate is empty.
-- **`bet --max-bets N`** CLI parameter (default 10). After Kelly sizing,
+- **`bet --max-bets N`** CLI parameter (no default cap). After Kelly sizing,
   keeps only the top-N bets ranked by edge and drops the rest. Re-applies
-  the 30% portfolio cap after trimming. Prevents multi-match days from
-  producing dozens of sub-noise stakes when many fixtures pass the edge gate.
+  the 30% portfolio cap after trimming. When omitted, all bets above the edge
+  threshold are shown. Useful for focused execution on highest-conviction plays.
+- **`bet --best-line`** flag. When set, only the single highest-edge line per
+  match per market type (AH / OU separately) is forwarded to the Kelly engine.
+  Prevents correlated nested bets (e.g. AH −1.5 and AH −2.5 on the same match).
+  Default is off — all lines above the edge threshold are shown so the user can
+  choose manually.
 
 ### Changed
-- **Default `edge_threshold` raised from 3% to 5%** (`DEFAULT_EDGE_THRESHOLD`
+- **Default `edge_threshold` raised from 3% to 6%** (`DEFAULT_EDGE_THRESHOLD`
   in `skill/bet/kelly.py`). Industry best practice for models with estimated
   (not true) probabilities: at 3% the signal-to-noise ratio is too low when
   AH/OU odds are modelled fair prices rather than real Pinnacle lines. Lower
   back to 3% via `--edge 0.03` once Pinnacle real odds are integrated (P0.2b).
+- **`bet` default output changed from `--best-line` to all-lines**. Previously
+  the Kelly engine received only the single best line per match per market type.
+  Now all lines above the edge threshold are output; use `--best-line` to restore
+  the old single-best-line behaviour. Gives users full visibility to choose lines.
 
 ---
 
