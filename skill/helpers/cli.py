@@ -1352,7 +1352,7 @@ def _cmd_bet(args):
         print(f"no predictions at {preds_f} — run `predict` first", file=sys.stderr)
         sys.exit(1)
     preds = json.loads(preds_f.read_text())
-    mode = getattr(args, "mode", "ahou")
+    mode = getattr(args, "mode", "1x2")
     want_1x2 = mode in ("1x2", "all")
     want_ah = mode in ("ah", "ahou", "all")
     want_ou = mode in ("ou", "ahou", "all")

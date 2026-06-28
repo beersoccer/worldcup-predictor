@@ -397,7 +397,7 @@ PYTHONPATH=. python -m skill.helpers.cli <subcommand> [args]
 | `publish [--date]` | — | 打包报告 → `site/data.json` |
 | `review` | `--sims N` | 赛后结算：补充结果、重预测、更新 P&L |
 | `market [--date]` | — | 打印夺冠赔率：模型 vs Polymarket + edge |
-| `bet --bankroll N` | `--mode [ah\|ou\|ahou\|1x2\|all]`（默认 `ahou`），`--date`，`--edge`（默认 0.06），`--max-bets N`，`--best-line` | 生成今日下注建议 |
+| `bet --bankroll N` | `--mode [ah\|ou\|ahou\|1x2\|all]`（默认 `1x2`），`--date`，`--edge`（默认 0.06），`--max-bets N`，`--best-line` | 生成今日下注建议 |
 | `players --match <id>` | `--refresh` | 每场比赛可能进球的球员列表 |
 | `portraits [--topk N]` | — | 预下载球员头像到 `site/portraits/` |
 | `backtest` | `--start`，`--end`，`--xi`，`--markets` | Walk-forward 回测（1X2 或 AH/OU） |
@@ -471,9 +471,10 @@ PYTHONPATH=. python -m skill.helpers.cli <subcommand> [args]
 **Q: `bet` 命令输出"Slate empty"，没有推荐？**  
 A: 两种原因：(1) 当日比赛无 Polymarket 报价（AH 的市场锚点来自 1X2，而 1X2 需要 Polymarket）；(2) 所有比赛的 edge 都低于门槛（默认 6%）。先跑 `fetch --all` 确认有市场数据，或用 `market` 命令检查。也可用 `--edge 0.05` 临时降低门槛观察候选注单。
 
-**Q: 为什么默认是 `--mode ahou`？**  
-A: 主流亚洲盘口同时提供让球盘和大小盘三栏式（输赢盘/让球盘/大小盘），
-ahou 模式与之对齐，Kelly 在两个市场之间统一分配仓位。
+**Q: 为什么默认是 `--mode 1x2`？**  
+A: WC2026 小组赛 36 场实盘验证（Run 31）：1X2 场次命中率 56%、ROI +14.7%，
+是三类盘口中最稳健的。AH 场次命中率仅 21%，且当前 AH/OU 赔率来自模型公允价而非真实
+Pinnacle 盘口，edge 可信度有限。需要亚洲盘口时使用 `--mode ahou`。
 
 **Q: 现在 AH ±1.5、±2.5、整数线、OU 各档都能下注吗？**  
 A: 大部分可以。1X2→λ_market 反解出市场隐含的进球期望后，所有线条的市场隐含概率
