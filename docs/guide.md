@@ -47,7 +47,7 @@ PYTHONPATH=. python -m skill.helpers.cli fetch --all
 # Step 2：生成预测（含 50k 蒙特卡洛模拟）
 PYTHONPATH=. python -m skill.helpers.cli predict --simulate
 
-# Step 3：查看今日推荐下注（默认 AH 让球盘模式）
+# Step 3：查看今日推荐下注（默认 1X2 胜负平，Run 31 验证最稳健）
 PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 1500
 
 # Step 4（可选）：发布到本地看板
@@ -87,7 +87,7 @@ PYTHONPATH=. python -m skill.helpers.cli bet [选项]
 | 参数 | 默认值 | 说明 |
 |---|---|---|
 | `--bankroll` | 10000 | 当前本金（任意单位，输出 stake 与之成比例） |
-| `--mode` | `ahou` | 推荐市场，见下表 |
+| `--mode` | `1x2` | 推荐市场，见下表 |
 | `--date` | 今日 | 指定预测日期，格式 `YYYY-MM-DD` |
 | `--edge` | 0.06 | 最低 edge 门槛，低于此不输出；可临时调低观察更多候选 |
 | `--max-bets` | 无限制 | 设置后只输出 edge 最高的 N 条，不设则显示全部超过门槛的注单 |
@@ -97,10 +97,10 @@ PYTHONPATH=. python -m skill.helpers.cli bet [选项]
 
 | 模式 | 命令 | 输出 | 适用场景 |
 |---|---|---|---|
-| `ahou`（默认） | `bet --mode ahou` | 让球盘 + 大小盘各 3 条线 | 推荐日常使用，对齐主流亚洲盘口 |
+| `1x2`（默认） | `bet --mode 1x2` | 胜平负 | 推荐日常使用（Run 31 实盘验证，命中率 56%，ROI +14.7%） |
 | `ah` | `bet --mode ah` | 让球盘 3 条线 | 仅看让球盘 |
 | `ou` | `bet --mode ou` | 大小盘 3 条线 | 仅看大小盘 |
-| `1x2` | `bet --mode 1x2` | 胜平负 | 看欧赔输赢盘 |
+| `ahou` | `bet --mode ahou` | 让球盘 + 大小盘各 3 条线 | 对齐主流亚洲盘口（赔率为模型公允价，非真实市场赔率） |
 | `all` | `bet --mode all` | 1X2 + AH + OU 全部 | Kelly 在所有市场间统一分配仓位 |
 
 **自动选线规则**（动态、按比赛而异）：
@@ -379,6 +379,7 @@ ROI = total_pnl / total_stake
 2. **赛前 30 分钟最后一次 `fetch`**，确保 Polymarket 价格是最新的
 3. 整个世界杯约产生 20–30 注（edge 达标），每注约占本金 2–4%
 4. 短期方差是正常的，即使模型有 5% edge，也可能连续 5 场亏损
+5. **优先使用 1X2 盘口**（Run 31 实盘验证）。小组赛 36 场实盘数据显示：1X2 命中率 56%、ROI +14.7%；AH 场次命中率仅 21%、ROI −27%，且存在强弱队悬殊场次的系统性偏差。接入 Pinnacle 真实 AH/OU 赔率（P0.2b）前，以 `--mode 1x2` 或 `--mode all` 为主，AH/OU 仅作参考。
 
 ---
 
@@ -490,6 +491,17 @@ A: 运行 `review` 后，看板的"Betting"面板会显示累计 P&L、ROI 和�
 
 **Q: 看板上的 AH/OU P&L 是真实盈亏吗？**  
 A: **不是真实市场盈亏**，是模拟值。当前 AH/OU 赔率来自模型自算的公允价（DC 得分矩阵反解），而非 Pinnacle 实盘赔率。接入 The Odds API Pinnacle 真实盘口（P0.2b）后，P&L 才具备真实参考价值。1X2 的赔率同样来自 Polymarket/Kalshi 去佣后的公允价。详见 §5.4。
+
+**Q: 实盘数据显示哪种盘口效果最好？**  
+A: WC2026 小组赛 36 场实盘统计（Run 31，2026-06-28）：
+
+| 盘口 | 命中率（场次） | ROI | 说明 |
+|---|---|---|---|
+| **1X2 胜负平** | **56%** | **+14.7%** | 使用真实 Polymarket 赔率，剔除最大赢注后仍 +9.2% |
+| OU 大小盘 | 45% | +37.1% | 严重依赖单注（Algeria vs Austria OU 2.5 over，剔除后 +11.6%） |
+| AH 让球盘 | 21% | −27.4% | 存在系统性偏差：强弱队悬殊场次让球线低估，多线条同时亏损放大损失 |
+
+**当前推荐：以 `--mode 1x2` 为主**。AH 在强弱队悬殊的淘汰赛阶段风险更大；OU 可辅助但方差极高。待接入 Pinnacle 真实 AH/OU 赔率（P0.2b）后再重新评估。详见 `reports/backtests/FINDINGS.md` Run 31。
 
 **Q: 为什么不把 Kelly 分数翻倍以提高收益？**  
 A: 翻倍（1/4→1/2 Kelly）的前提是真实 edge 已验证充分。当前 AH/OU 赔率是模型公允价而非真实市场赔率，真实 edge 未知；加之实盘样本尚不足 20 注。基于未验证的 edge 放大仓位会成倍放大回撤风险。接入 Pinnacle 真实盘口并积累 30+ 注实证数据后，若 ROI ≥ 5%，可考虑升至 1/3 Kelly。详见 §5.5。

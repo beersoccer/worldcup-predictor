@@ -882,3 +882,122 @@ weakest at the low end of the OU distribution (ρ correction zone). AH integers 
 but with elevated ECE — the highest-edge-line-per-market-type filter (`_best_line_per_market_type`)
 mitigates this by discarding the poorly-calibrated integer line when a sharper half-line
 carries a higher edge on the same match.
+
+## Run 31 — WC2026 live market analysis: per-market ROI + MARKET_WEIGHT re-calibration check
+
+**Date:** 2026-06-28. **Sample:** 36 WC2026 group-stage matches with live Polymarket/Kalshi
+market data; 60 settled bet records (28 AH, 32 OU) from `reports/bets/2026-06-21` through
+`reports/bets/2026-06-27`. 1X2 simulated from `model_1x2` vs `market_1x2` in predictions.
+
+### Part A — Per-market live performance
+
+#### 1X2 (simulated, edge ≥ 6%)
+
+| Metric | Value |
+|--------|-------|
+| Signals | 16 |
+| Hit rate | 56.2% |
+| Total staked | 1200 (fixed 75/bet) |
+| P&L | +176 |
+| ROI | **+14.7%** |
+| ROI ex-best bet | **+9.2%** |
+| Avg edge | 12.3% |
+| Avg odds | 3.04 |
+
+1X2 uses real Polymarket/Kalshi de-vigged probabilities as odds — these are genuine
+market prices, not model fair prices.
+
+#### AH (real bets from logs)
+
+| Metric | Value |
+|--------|-------|
+| Bets / Matches | 28 / 19 |
+| Match win rate | 4/19 = **21%** |
+| P&L | **−318** |
+| ROI | **−27.4%** |
+| ROI ex-best bet | −35.6% |
+| Avg edge | 13.0% |
+| Avg odds | 3.01 |
+
+**Note:** AH odds are model fair prices (DC score matrix inversion), not real Pinnacle
+lines. True ROI may differ. The −27% figure signals systematic directional error, not
+just variance.
+
+Root cause: model high-estimates weak-side win probability in mismatched fixtures
+(e.g. Jordan +2.5 away vs Argentina, Panama +1.5 away vs Croatia, Senegal −1.5 away vs Iraq).
+In 12 of 19 AH match-batches, all lines lost simultaneously — the multi-line correlation
+amplified losses. The AH handicap line is derived from DC λ, which systematically
+underestimates the favourite's margin in cross-confederation mismatches.
+
+#### OU (real bets from logs)
+
+| Metric | Value |
+|--------|-------|
+| Bets / Matches | 32 / 22 |
+| Match win rate | 10/22 = **45%** |
+| P&L | **+506** |
+| ROI | **+37.1%** |
+| ROI ex-best bet | **+11.6%** |
+| Avg edge | 14.9% |
+| Avg odds | 3.28 |
+
+**Note:** same fair-price caveat as AH. The +37% ROI is heavily driven by a single
+outlier: Algeria vs Austria OU 2.5 over (+353, odds ≈ 9.4x). Ex-outlier ROI drops to
++11.6%. Match win rate of 45% is close to coin-flip; positive returns are driven by
+high-odds winners, not directional skill.
+
+### Part B — MARKET_WEIGHT re-calibration check (triggered by `_market_weight_protocol`)
+
+The `review` command on 2026-06-28 triggered `status=REVIEW`: forward evidence on 30
+matches preferred w=0.00 over w=0.60 (RPS gain 0.0053).
+
+**Full sweep across w ∈ {0.0 … 1.0} on 36 deduplicated WC2026 matches:**
+
+| w | mean_RPS | vs w=0.6 |
+|---|---------|---------|
+| 0.0 | 0.0774 | −0.0041 ← optimal |
+| 0.1 | 0.0779 | −0.0036 |
+| 0.2 | 0.0784 | −0.0031 |
+| 0.3 | 0.0791 | −0.0024 |
+| 0.4 | 0.0798 | −0.0017 |
+| 0.5 | 0.0806 | −0.0009 |
+| **0.6** | **0.0815** | **0.0000 ← current** |
+| 0.7 | 0.0825 | +0.0010 |
+| 0.8 | 0.0835 | +0.0020 |
+| 0.9 | 0.0846 | +0.0031 |
+| 1.0 | 0.0858 | +0.0043 |
+
+**Bootstrap significance (10 000 resamples, w=0.0 vs w=0.6):**
+- Probability w=0.6 worse than w=0.0: **89%**
+- Mean RPS gain for w=0.0: +0.0042
+- 95% CI: [−0.0022, +0.0115] — **crosses zero**
+
+**Historical walk-forward limitation:** The 2018–2026 walk-forward (Run 26, n=626)
+contains no Polymarket data — it is impossible to directly validate a lower w on
+historical data. This is a permanent data gap; the CLAUDE.md requirement "must not
+worsen historical walk-forward" cannot be technically verified for any w ≠ current.
+
+### Decisions
+
+1. **MARKET_WEIGHT: no change (remains 0.60).** Evidence direction favours w=0.0, but
+   statistical power is insufficient (95% CI crosses zero, n=36). Re-evaluate after
+   Round of 16 completes (expected n≈50+). If 95% CI is fully positive at that point,
+   record a new Run entry and lower MARKET_WEIGHT.
+
+2. **Preferred market for live betting: 1X2 over AH.** On this WC2026 sample:
+   - 1X2 hit rate 56% vs AH match-level 21% — the directional model is more reliable
+     than the handicap line (which is derived from the same DC λ and inherits its bias)
+   - 1X2 uses genuine market odds; AH uses model fair prices (unknown true edge)
+   - AH has systematic directional bias in strong-vs-weak fixtures (cross-confederation
+     gap underestimated); this bias is most pronounced in the knockout stage where
+     mismatches are common
+   - OU remains viable as a secondary market but only when edge ≥ 10% and the signal
+     is not driven by a low-scoring-match model (OU 2.5 under in mismatched fixtures
+     often coincides with the same directional error as AH)
+
+3. **Recommended operating mode until Pinnacle AH/OU odds are integrated (P0.2b):**
+   `bet --mode all` or `bet --mode 1x2`. Treat AH/OU output as reference only.
+
+4. **AH directional bias investigation deferred to Run 32.** Candidate fix: increase
+   cross-confederation λ gap from 0.075 to 0.10–0.12 and re-run walk-forward on
+   strong-vs-weak subset. Requires a clean FINDINGS.md entry before any code change.
