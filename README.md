@@ -16,9 +16,9 @@ validation gates every factor before it can carry stakes.
 - **Tournament:** Monte Carlo (≥50k runs) → group / round / title probabilities
 - **Live:** daily refresh of odds, lineups, weather; realised RPS / Brier tracked
 - **Bet slate:** `cli bet` drafts a Quarter-Kelly stake-sized recommendation
-  list across AH + OU lines (default `--mode ahou`, mirroring mainstream
-  Asian-book layout 输赢盘 / 让球盘 / 大小盘), with per-market walk-forward
-  acceptance enforced
+  list (default `--mode 1x2`, validated highest hit-rate in WC2026 live data;
+  use `--mode ahou` for Asian-book AH + OU layout), with per-market
+  walk-forward acceptance enforced
 
 ## 📖 Documentation
 

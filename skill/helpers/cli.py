@@ -1352,7 +1352,7 @@ def _cmd_bet(args):
         print(f"no predictions at {preds_f} — run `predict` first", file=sys.stderr)
         sys.exit(1)
     preds = json.loads(preds_f.read_text())
-    mode = getattr(args, "mode", "ahou")
+    mode = getattr(args, "mode", "1x2")
     want_1x2 = mode in ("1x2", "all")
     want_ah = mode in ("ah", "ahou", "all")
     want_ou = mode in ("ou", "ahou", "all")
@@ -1513,10 +1513,10 @@ def main(argv=None):
     pbet = sub.add_parser("bet", help="Recommended bet slate from latest predictions")
     pbet.add_argument("--date", default=None, help="Report date (default: today)")
     pbet.add_argument("--bankroll", type=float, default=10000.0)
-    pbet.add_argument("--mode", default="ahou",
+    pbet.add_argument("--mode", default="1x2",
                       choices=["ah", "ou", "ahou", "1x2", "all"],
-                      help="Markets to recommend: ahou (default; AH + OU), "
-                           "ah, ou, 1x2, or all")
+                      help="Markets to recommend: 1x2 (default; win/draw/loss), "
+                           "ah, ou, ahou (AH + OU), or all")
     pbet.add_argument("--edge", type=float, default=None, dest="edge_threshold",
                       metavar="EDGE",
                       help="Minimum edge to bet (default: 0.05 = 5%%). "

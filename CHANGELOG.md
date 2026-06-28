@@ -32,6 +32,12 @@ removed, or has its weight changed (cross-references `reports/backtests/FINDINGS
   A horizontal rule separates bets from the TOTAL line.
 
 ### Changed
+- **Default `bet --mode` changed from `ahou` to `1x2`** (Run 31 live validation).
+  WC2026 group-stage data (36 matches): 1X2 match hit-rate 56% / ROI +14.7% vs
+  AH match hit-rate 21% / ROI −27%. AH/OU odds are model fair prices (not real
+  Pinnacle lines); true AH/OU edge is unverified. Use `--mode ahou` to restore
+  Asian-book layout. Re-evaluate after Pinnacle real AH/OU odds are integrated
+  (P0.2b) and ≥30 settled AH bets accumulated.
 - **Default `edge_threshold` raised from 3% to 6%** (`DEFAULT_EDGE_THRESHOLD`
   in `skill/bet/kelly.py`). Industry best practice for models with estimated
   (not true) probabilities: at 3% the signal-to-noise ratio is too low when
