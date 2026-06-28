@@ -128,14 +128,84 @@ def fetch_goalscorers(force: bool = False) -> pd.DataFrame:
     return df.dropna(subset=["date", "scorer"])
 
 
+# football-data.org team name -> martj42 canonical name (only entries that differ)
+_FD_NAME_MAP: dict[str, str] = {
+    "Bosnia-Herzegovina": "Bosnia and Herzegovina",
+    "Cape Verde Islands": "Cape Verde",
+    "Congo DR":           "DR Congo",
+}
+
+
+def _fd_to_martj42(name: str | None) -> str | None:
+    if not name:
+        return None
+    return _FD_NAME_MAP.get(name, name)
+
+
 def load_wc2026_fixtures() -> pd.DataFrame:
-    """Future WC2026 rows (scores still NA) = the fixture list to predict."""
+    """WC2026 fixture list: group stage (from martj42 CSV) + knockout stage
+    (from football-data.org fd_matches cache, merged on team name).
+
+    Group-stage rows carry real scores once the CSV maintainer publishes them
+    (or sooner via _overlay_fd_scores). Knockout rows start with NA scores and
+    gain scores as matches finish via _overlay_fd_scores on the next fetch.
+    """
     df = fetch_historical()
     mask = (
         (df["tournament"] == paths.WC2026_TOURNAMENT)
         & (df["date"] >= pd.Timestamp(paths.WC2026_START))
     )
-    fx = df.loc[mask].copy().sort_values("date").reset_index(drop=True)
+    group_fx = df.loc[mask].copy()
+
+    # Merge knockout fixtures from football-data.org (not in martj42 until played)
+    knockout_rows = []
+    try:
+        fd_ms = fetch_fd_matches()
+        existing = set(
+            zip(group_fx["home_team"].str.lower(), group_fx["away_team"].str.lower())
+        )
+        for m in fd_ms:
+            if m.get("stage") == "GROUP_STAGE":
+                continue
+            h_fd = (m.get("homeTeam") or {}).get("name")
+            a_fd = (m.get("awayTeam") or {}).get("name")
+            h = _fd_to_martj42(h_fd)
+            a = _fd_to_martj42(a_fd)
+            if not h or not a:
+                continue  # TBD slot (team not yet determined)
+            if (h.lower(), a.lower()) in existing:
+                continue  # already in group stage data (shouldn't happen)
+            date_str = (m.get("utcDate") or "")[:10]
+            ft = (m.get("score") or {}).get("fullTime") or {}
+            hs = float(ft["home"]) if ft.get("home") is not None else float("nan")
+            as_ = float(ft["away"]) if ft.get("away") is not None else float("nan")
+            knockout_rows.append({
+                "date":       pd.Timestamp(date_str) if date_str else pd.NaT,
+                "home_team":  h,
+                "away_team":  a,
+                "tournament": paths.WC2026_TOURNAMENT,
+                "neutral":    True,
+                "home_score": hs,
+                "away_score": as_,
+                "city":       (m.get("venue") or {}).get("city"),
+                "country":    None,
+            })
+    except Exception as e:  # noqa: BLE001
+        import sys as _sys
+        print(f"[knockout fixtures skipped] {e}", file=_sys.stderr)
+
+    if knockout_rows:
+        knockout_df = pd.DataFrame(knockout_rows)
+        # align columns — group_fx may have extra cols; fill missing with NaN
+        for col in group_fx.columns:
+            if col not in knockout_df.columns:
+                knockout_df[col] = float("nan")
+        knockout_df = knockout_df[group_fx.columns]
+        fx = pd.concat([group_fx, knockout_df], ignore_index=True)
+    else:
+        fx = group_fx.copy()
+
+    fx = fx.sort_values("date").reset_index(drop=True)
     fx["fixture_id"] = [f"wc2026-{i:03d}" for i in range(len(fx))]
     return fx
 
