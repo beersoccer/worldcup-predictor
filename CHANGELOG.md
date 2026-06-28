@@ -14,6 +14,14 @@ removed, or has its weight changed (cross-references `reports/backtests/FINDINGS
 ## [Unreleased]
 
 ### Added
+- **Knockout stage fixtures from football-data.org** (`load_wc2026_fixtures`).
+  `martj42/international_results` only publishes results after matches are played,
+  so R32/QF/SF/Final rows were absent until kickoff. `load_wc2026_fixtures()` now
+  merges upcoming knockout fixtures from the `fd_matches.json` cache (already
+  fetched on every `fetch --all`). Three team-name mismatches resolved via
+  `_FD_NAME_MAP` (`Bosnia-Herzegovina`, `Cape Verde Islands`, `Congo DR`). Scores
+  flow in automatically via `_overlay_fd_scores` on the next `fetch --all`.
+  Result: 88 total fixtures (72 group + 16 R32 at tournament start).
 - **`bet --edge EDGE`** CLI parameter. Overrides the default edge gate per
   invocation (e.g. `--edge 0.03` to inspect more candidates without changing
   the default). Useful for diagnostics when the slate is empty.
