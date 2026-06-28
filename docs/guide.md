@@ -423,10 +423,11 @@ PYTHONPATH=. python -m skill.helpers.cli <subcommand> [args]
 
 | 数据 | 来源 | 用途 | API key |
 |---|---|---|---|
-| 历史比赛结果 + WC2026 赛程 | [martj42/international_results](https://github.com/martj42/international_results)（公共 CSV） | DC MLE 训练（49k+ 场，含友谊赛 / 资格赛 / 正赛） | 无需 |
+| 历史比赛结果 + WC2026 小组赛赛程 | [martj42/international_results](https://github.com/martj42/international_results)（公共 CSV） | DC MLE 训练（49k+ 场，含友谊赛 / 资格赛 / 正赛）；小组赛比分通常有 1-2 天延迟 | 无需 |
+| WC2026 淘汰赛赛程 | football-data.org 免费层（`/competitions/WC/matches`，缓存至 `data/fd_matches.json`） | 淘汰赛对阵在 martj42 打完前不存在；从 fd_matches 合并进赛程，比分通过 `_overlay_fd_scores` 回填 | `FOOTBALLDATA_KEY` |
 | 进球记录 | martj42/goalscorers.csv | Golden Boot + 球员形态 | 无需 |
 | 点球大战历史 | martj42/shootouts.csv | 点球硬币校准（Run 29） | 无需 |
-| 赛程 / 实时比分 | football-data.org 免费层 | 比分回填 + 元信息 | `FOOTBALLDATA_KEY` |
+| 实时比分回填 | football-data.org 免费层 | 小组赛比分实时回填（不等 martj42 延迟） | `FOOTBALLDATA_KEY` |
 | 比赛日首发 XI | API-Football 免费层 | 阵容确认、缺阵球员调整 | `APIFOOTBALL_KEY` |
 | 预测市场（1X2） | Polymarket Gamma API + Kalshi | 市场锚定（per-match 1X2） | 无需 |
 | 球场 / 海拔 / 坐标 | `data/venues_wc2026.json`（自建静态表） | 海拔上下文调整 | 无需 |
@@ -469,7 +470,7 @@ PYTHONPATH=. python -m skill.helpers.cli <subcommand> [args]
 ## 10. 常见问题
 
 **Q: `bet` 命令输出"Slate empty"，没有推荐？**  
-A: 两种原因：(1) 当日比赛无 Polymarket 报价（AH 的市场锚点来自 1X2，而 1X2 需要 Polymarket）；(2) 所有比赛的 edge 都低于门槛（默认 6%）。先跑 `fetch --all` 确认有市场数据，或用 `market` 命令检查。也可用 `--edge 0.05` 临时降低门槛观察候选注单。
+A: 三种原因：(1) **淘汰赛场次未加载**——先跑 `fetch --all` 刷新 `fd_matches.json`，再重新 `predict`；(2) 当日比赛无 Polymarket 报价（1X2 需要 Polymarket 才能计算 edge）；(3) 所有比赛的 edge 都低于门槛（默认 6%，模型与市场判断一致）。可用 `--edge 0.04` 临时降低门槛观察候选注单。
 
 **Q: 为什么默认是 `--mode 1x2`？**  
 A: WC2026 小组赛 36 场实盘验证（Run 31）：1X2 场次命中率 56%、ROI +14.7%，
