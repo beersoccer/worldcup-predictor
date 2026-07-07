@@ -626,10 +626,22 @@ def _schedule_payload(preds: list) -> list:
     for m in sorted(data_loader.fetch_fd_matches(), key=lambda x: x.get("utcDate", "")):
         home = data_loader.fd_canon((m.get("homeTeam") or {}).get("name"))
         away = data_loader.fd_canon((m.get("awayTeam") or {}).get("name"))
-        ft = (m.get("score") or {}).get("fullTime") or {}
+        score_obj = m.get("score") or {}
+        duration = score_obj.get("duration", "REGULAR")
         status = m.get("status")
-        score = (f"{ft['home']}-{ft['away']}"
-                 if status == "FINISHED" and ft.get("home") is not None else None)
+        # For AET/PEN, use regularTime for 1X2 outcome (markets settle on 90 min)
+        if duration not in ("REGULAR", None):
+            rt = score_obj.get("regularTime") or {}
+            ft_display = score_obj.get("fullTime") or {}
+            suffix = " (AET)" if duration == "EXTRA_TIME" else " (PEN)"
+        else:
+            rt = score_obj.get("fullTime") or {}
+            ft_display = rt
+            suffix = ""
+        score_90 = (f"{rt['home']}-{rt['away']}"
+                    if status == "FINISHED" and rt.get("home") is not None else None)
+        score = (f"{ft_display['home']}-{ft_display['away']}{suffix}"
+                 if status == "FINISHED" and ft_display.get("home") is not None else None)
         rec = {"date": (m.get("utcDate") or "")[:10], "stage": m.get("stage"),
                "matchday": m.get("matchday"), "group": (m.get("group") or "").replace("GROUP_", ""),
                "home": home, "away": away, "status": status, "score": score}
@@ -642,8 +654,8 @@ def _schedule_payload(preds: list) -> list:
             p = q
         if rec.get("probs"):
             rec["pick"] = int(max(range(3), key=lambda i: rec["probs"][i]))
-        if p and score:
-            h, a = (int(x) for x in score.split("-"))
+        if p and score_90:
+            h, a = (int(x) for x in score_90.split("-"))
             outcome = 0 if h > a else (1 if h == a else 2)
             rec["correct"] = rec["pick"] == outcome
         out.append(rec)

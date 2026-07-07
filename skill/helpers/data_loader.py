@@ -68,24 +68,40 @@ def _overlay_fd_scores(df: pd.DataFrame) -> pd.DataFrame:
     """The community CSV records WC2026 scores with a lag of days; football-data.org
     has them at full time. Fill only score-less WC2026 rows from the fd cache so the
     live review, scoreboard and model refits never wait on the CSV maintainer.
-    Matches on canonical team names with ±1 day tolerance (UTC vs local date drift)."""
+    Matches on canonical team names with ±1 day tolerance (UTC vs local date drift).
+
+    For knockout matches that go to extra time or penalties, betting markets settle
+    on the 90-minute (regularTime) score, so we store that rather than fullTime.
+    We also correct rows already filled by the CSV maintainer with the fullTime score
+    (which includes extra time goals) by overwriting them with the regularTime score."""
     try:
-        finished = {}
+        finished = {}      # (h, a) -> (date, score_h, score_a) using 90-min score
+        aet_fulltime = {}  # (h, a) -> (fulltime_h, fulltime_a) for AET/PEN matches only
         for m in fetch_fd_matches():
-            ft = (m.get("score") or {}).get("fullTime") or {}
-            if m.get("status") != "FINISHED" or ft.get("home") is None:
+            score = m.get("score") or {}
+            duration = score.get("duration", "REGULAR")
+            if duration != "REGULAR":
+                # Use 90-minute score for AET/PEN matches (markets settle on 90 min)
+                use_score = score.get("regularTime") or {}
+                ft_score = score.get("fullTime") or {}
+            else:
+                use_score = score.get("fullTime") or {}
+                ft_score = use_score
+            if m.get("status") != "FINISHED" or use_score.get("home") is None:
                 continue
             h = fd_canon((m.get("homeTeam") or {}).get("name"))
             a = fd_canon((m.get("awayTeam") or {}).get("name"))
             if h and a:
-                finished[(h, a)] = (pd.Timestamp((m.get("utcDate") or "")[:10]),
-                                    int(ft["home"]), int(ft["away"]))
+                date = pd.Timestamp((m.get("utcDate") or "")[:10])
+                finished[(h, a)] = (date, int(use_score["home"]), int(use_score["away"]))
+                if duration != "REGULAR" and ft_score.get("home") is not None:
+                    aet_fulltime[(h, a)] = (int(ft_score["home"]), int(ft_score["away"]))
         if not finished:
             return df
-        mask = ((df["tournament"] == paths.WC2026_TOURNAMENT)
-                & (df["date"] >= pd.Timestamp(paths.WC2026_START))
-                & df["home_score"].isna())
-        for i in df.index[mask]:
+        wc_mask = ((df["tournament"] == paths.WC2026_TOURNAMENT)
+                   & (df["date"] >= pd.Timestamp(paths.WC2026_START)))
+        # Pass 1: fill rows with no score yet
+        for i in df.index[wc_mask & df["home_score"].isna()]:
             key = (_canon(df.at[i, "home_team"]), _canon(df.at[i, "away_team"]))
             rec = finished.get(key)
             flipped = rec is None and finished.get((key[1], key[0]))
@@ -93,6 +109,23 @@ def _overlay_fd_scores(df: pd.DataFrame) -> pd.DataFrame:
                 rec = (flipped[0], flipped[2], flipped[1])
             if rec and abs((rec[0] - df.at[i, "date"]).days) <= 1:
                 df.at[i, "home_score"], df.at[i, "away_score"] = float(rec[1]), float(rec[2])
+        # Pass 2: correct rows where CSV recorded fullTime (incl. extra time) for AET/PEN matches
+        for i in df.index[wc_mask & df["home_score"].notna()]:
+            key = (_canon(df.at[i, "home_team"]), _canon(df.at[i, "away_team"]))
+            flipped_key = (key[1], key[0])
+            ft = aet_fulltime.get(key)
+            rt_rec = finished.get(key)
+            if ft is None:
+                ft = aet_fulltime.get(flipped_key)
+                rt_rec = finished.get(flipped_key)
+                if rt_rec:
+                    rt_rec = (rt_rec[0], rt_rec[2], rt_rec[1])
+            if ft is None or rt_rec is None:
+                continue
+            stored = (int(df.at[i, "home_score"]), int(df.at[i, "away_score"]))
+            if stored == ft and stored != (rt_rec[1], rt_rec[2]):
+                df.at[i, "home_score"] = float(rt_rec[1])
+                df.at[i, "away_score"] = float(rt_rec[2])
     except Exception as e:  # noqa: BLE001 — overlay is best-effort, CSV alone still works
         print(f"[fd score overlay skipped] {e}", file=_sys.stderr)
     return df
@@ -176,7 +209,12 @@ def load_wc2026_fixtures() -> pd.DataFrame:
             if (h.lower(), a.lower()) in existing:
                 continue  # already in group stage data (shouldn't happen)
             date_str = (m.get("utcDate") or "")[:10]
-            ft = (m.get("score") or {}).get("fullTime") or {}
+            score = m.get("score") or {}
+            duration = score.get("duration", "REGULAR")
+            if duration != "REGULAR":
+                ft = score.get("regularTime") or {}
+            else:
+                ft = score.get("fullTime") or {}
             hs = float(ft["home"]) if ft.get("home") is not None else float("nan")
             as_ = float(ft["away"]) if ft.get("away") is not None else float("nan")
             knockout_rows.append({
@@ -564,9 +602,103 @@ def fetch_fd_matches(force: bool = False) -> list[dict[str, Any]]:
         ms = r.json().get("matches", [])
         if ms:
             _write_json_atomic(FD_MATCHES_JSON, _json.dumps(ms, ensure_ascii=False))
+            sync_shootouts_from_fd(ms)
         return ms
     except requests.RequestException:
         return _json.loads(FD_MATCHES_JSON.read_text()) if FD_MATCHES_JSON.exists() else []
+
+
+def sync_shootouts_from_fd(matches: list[dict] | None = None) -> int:
+    """Append WC2026 knockout tie-break results from fd_matches.json to shootouts.csv.
+
+    Handles both outcomes that need a winner recorded beyond the 90-min score:
+      - PENALTY_SHOOTOUT: tie after 90 min + extra time, decided by penalties.
+      - EXTRA_TIME: tie after 90 min, decided in extra time (no shootout).
+
+    football-data.org records `score.winner` (HOME_TEAM / AWAY_TEAM) for both.
+    martj42 shootouts.csv is also used by the simulator for EXTRA_TIME winners
+    (any row where 90-min score is level and a winner must be known). We write
+    both kinds so the simulator can pin every completed knockout draw correctly.
+
+    Returns the number of new rows added.
+    """
+    import sys as _sys
+
+    shootouts_f = paths.HISTORICAL / "shootouts.csv"
+    try:
+        if matches is None:
+            matches = fetch_fd_matches()
+
+        # build set of existing (date, home, away) keys — avoids duplicates
+        existing: set[tuple[str, str, str]] = set()
+        if shootouts_f.exists():
+            df_sh = pd.read_csv(shootouts_f)
+            for r in df_sh.itertuples(index=False):
+                existing.add((str(r.date), str(r.home_team), str(r.away_team)))
+
+        # build a lookup from martj42 fixture dates for UTC→local date correction.
+        # fd utcDate can be 1 day ahead of the local match date martj42 uses.
+        # Key: frozenset({home, away}) → local date string from the fixture CSV.
+        fx_date: dict[frozenset, str] = {}
+        try:
+            import pandas as _pd
+            _fx = _pd.read_csv(paths.HISTORICAL_RESULTS_CSV)
+            _fx["date"] = _pd.to_datetime(_fx["date"], errors="coerce")
+            _wc = _fx[(_fx["tournament"] == paths.WC2026_TOURNAMENT)
+                      & (_fx["date"] >= _pd.Timestamp(paths.WC2026_START))]
+            for _r in _wc.itertuples(index=False):
+                fx_date[frozenset((_r.home_team, _r.away_team))] = str(_r.date.date())
+        except Exception:  # noqa: BLE001 — best-effort correction
+            pass
+
+        new_rows: list[str] = []
+        for m in matches:
+            score = m.get("score") or {}
+            duration = score.get("duration")
+            if duration not in ("PENALTY_SHOOTOUT", "EXTRA_TIME"):
+                continue
+            if m.get("status") != "FINISHED":
+                continue
+            winner_side = score.get("winner")  # "HOME_TEAM" or "AWAY_TEAM"
+            if winner_side not in ("HOME_TEAM", "AWAY_TEAM"):
+                continue
+            # only record matches where the 90-min score was level (these are the
+            # ones the simulator can't resolve without an external winner record)
+            reg = score.get("regularTime") or {}
+            if reg.get("home") != reg.get("away"):
+                continue
+            h_fd = (m.get("homeTeam") or {}).get("name")
+            a_fd = (m.get("awayTeam") or {}).get("name")
+            h = _fd_to_martj42(h_fd)
+            a = _fd_to_martj42(a_fd)
+            if not h or not a:
+                continue
+            # prefer the local date from the martj42 fixture CSV; fall back to UTC date
+            utc_date = (m.get("utcDate") or "")[:10]
+            date_str = fx_date.get(frozenset((h, a))) or utc_date
+            if not date_str:
+                continue
+            if (date_str, h, a) in existing:
+                continue
+            winner = h if winner_side == "HOME_TEAM" else a
+            new_rows.append(f"{date_str},{h},{a},{winner},")
+
+        if new_rows:
+            with shootouts_f.open("a") as fh:
+                # ensure we start on a fresh line if the file lacks a trailing newline
+                if shootouts_f.stat().st_size > 0:
+                    with shootouts_f.open("rb") as _rf:
+                        _rf.seek(-1, 2)
+                        if _rf.read(1) != b"\n":
+                            fh.write("\n")
+                for row in new_rows:
+                    fh.write(row + "\n")
+            print(f"[shootouts] +{len(new_rows)} row(s) appended to {shootouts_f.name}",
+                  file=_sys.stderr)
+        return len(new_rows)
+    except Exception as e:  # noqa: BLE001 — never fatal; sim degrades gracefully
+        print(f"[shootouts sync skipped] {e}", file=_sys.stderr)
+        return 0
 
 
 def fetch_fd_match(match_id: int) -> dict[str, Any]:
