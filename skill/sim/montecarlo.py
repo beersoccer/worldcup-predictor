@@ -222,13 +222,20 @@ def run(model, fixtures: pd.DataFrame, n: int = 50000, seed: int = 0,
         gf[:, a] += ag
 
     # played-knockout result matrices (both orientations): winner id, actual goals.
-    # Inside _play, any simulated tie that reproduces a real played pairing is pinned.
+    # Used inside _play for pairwise pinning when teams are correctly matched in a slot.
+    # Also used directly to override winner arrays after each round (see below).
     res_w = np.full((nt, nt), -1, dtype=np.int64)
     res_hg = np.full((nt, nt), -1, dtype=np.int64)
     res_ag = np.full((nt, nt), -1, dtype=np.int64)
+    # ko_r32_pairs: {frozenset({h_tid, a_tid})} — only the 16 R32 matchups (first KO
+    # round), used to constrain home16/away16 without accidentally poisoning later rounds.
+    # Identified as the earliest 16 played KO fixtures (R32 always precedes R16+ in date).
+    ko_r32_pairs: set = set()
     if len(ko_played):
         shoot = _shootout_winners()
-        for r in ko_played.itertuples():
+        # sort by date so we can identify the first 16 (R32) vs later rounds
+        ko_sorted = ko_played.sort_values("date")
+        for ri, r in enumerate(ko_sorted.itertuples()):
             h, a = tid[r.home_team], tid[r.away_team]
             hs, as_ = int(r.home_score), int(r.away_score)
             if hs > as_:
@@ -244,6 +251,9 @@ def run(model, fixtures: pd.DataFrame, n: int = 50000, seed: int = 0,
             res_w[h, a] = res_w[a, h] = w
             res_hg[h, a], res_ag[h, a] = hs, as_
             res_hg[a, h], res_ag[a, h] = as_, hs
+            # first 16 sorted KO fixtures = R32 (WC always has exactly 16 R32 matches)
+            if ri < 16:
+                ko_r32_pairs.add(frozenset((h, a)))
     ko_pinned = bool((res_w >= 0).any())
 
     reached = {k: np.zeros(nt) for k in
@@ -343,21 +353,151 @@ def run(model, fixtures: pd.DataFrame, n: int = 50000, seed: int = 0,
         for j, (mi, _e) in enumerate(_THIRD_MATCHES):
             away16[:, mi] = third_fill[:, j]
 
+        # For R32 slots where the actual match has been played: assign the real
+        # participants directly to home16/away16. Each actual pair (h_tid, a_tid)
+        # shares exactly one R32 slot with one team that is deterministically placed
+        # (group W or RU). Find that team's column, set the other side to the real
+        # opponent, and zero-out any column that previously held that opponent so no
+        # team appears in two slots simultaneously.
+        if ko_r32_pairs:
+            for pair in ko_r32_pairs:
+                h_tid, a_tid = tuple(pair)
+                for col in range(16):
+                    matched = False
+                    if home16[0, col] == h_tid:
+                        old_away = away16[0, col]
+                        if old_away != a_tid:
+                            # move a_tid from wherever it currently sits (stochastic slot)
+                            for c2 in range(16):
+                                if c2 != col and away16[0, c2] == a_tid:
+                                    away16[:, c2] = old_away  # swap old_away back in
+                                    break
+                            away16[:, col] = a_tid
+                        matched = True
+                    elif home16[0, col] == a_tid:
+                        old_away = away16[0, col]
+                        if old_away != h_tid:
+                            for c2 in range(16):
+                                if c2 != col and away16[0, c2] == h_tid:
+                                    away16[:, c2] = old_away
+                                    break
+                            away16[:, col] = h_tid
+                        matched = True
+                    elif away16[0, col] == h_tid:
+                        old_home = home16[0, col]
+                        if old_home != a_tid:
+                            for c2 in range(16):
+                                if c2 != col and home16[0, c2] == a_tid:
+                                    home16[:, c2] = old_home
+                                    break
+                            home16[:, col] = a_tid
+                        matched = True
+                    elif away16[0, col] == a_tid:
+                        old_home = home16[0, col]
+                        if old_home != h_tid:
+                            for c2 in range(16):
+                                if c2 != col and home16[0, c2] == h_tid:
+                                    home16[:, c2] = old_home
+                                    break
+                            home16[:, col] = h_tid
+                        matched = True
+                    if matched:
+                        break
+
         np.add.at(reached["R32"], home16.ravel(), 1)
         np.add.at(reached["R32"], away16.ravel(), 1)
         # walk the real bracket tree (NOT sequential pairs)
         w32 = _play(home16, away16)                                   # 16 → reach R16
+        # After each round, pin winner arrays where actual results are known.
+        # The bracket slot map (_R16_PAIRS etc.) may not match the real pairings when
+        # 3rd-place slot assignments disagree with the official draw — so after pinning
+        # R32 results into w32, we also reorder w32 so that known R16 opponents are
+        # actually paired in the same _R16_PAIRS slot before calling _play.
+        if ko_pinned:
+            # R32 pins: straightforward — home16/away16 have real participants.
+            for col in range(16):
+                pw = res_w[home16[0, col], away16[0, col]]
+                if pw >= 0:
+                    w32[:, col] = pw
+            # R16 reorder: for each known R16 pair (h, a) from res_w, find where h and a
+            # sit in w32 and swap one of them into the slot that _R16_PAIRS will pair them.
+            a_r16, b_r16 = list(zip(*_R16_PAIRS))
+            for hi in range(nt):
+                for ai in range(nt):
+                    if res_w[hi, ai] < 0 or hi >= ai:
+                        continue  # only look at each known pair once
+                    # find which w32 columns carry hi and ai
+                    h_cols = [c for c in range(16) if w32[0, c] == hi]
+                    a_cols = [c for c in range(16) if w32[0, c] == ai]
+                    if not h_cols or not a_cols:
+                        continue
+                    hc, ac = h_cols[0], a_cols[0]
+                    # find which _R16_PAIRS slot pairs hc with something
+                    for pi, (pa, pb) in enumerate(_R16_PAIRS):
+                        if pa == hc:
+                            if pb != ac:
+                                # swap w32 col pb and ac so hi faces ai
+                                old_val = int(w32[0, pb])
+                                new_val = int(w32[0, ac])
+                                # find where old_val should go (the slot that was ac)
+                                w32[:, pb] = new_val
+                                w32[:, ac] = old_val
+                            break
+                        if pb == hc:
+                            if pa != ac:
+                                old_val = int(w32[0, pa])
+                                new_val = int(w32[0, ac])
+                                w32[:, pa] = new_val
+                                w32[:, ac] = old_val
+                            break
+                        if pa == ac:
+                            if pb != hc:
+                                old_val = int(w32[0, pb])
+                                new_val = int(w32[0, hc])
+                                w32[:, pb] = new_val
+                                w32[:, hc] = old_val
+                            break
+                        if pb == ac:
+                            if pa != hc:
+                                old_val = int(w32[0, pa])
+                                new_val = int(w32[0, hc])
+                                w32[:, pa] = new_val
+                                w32[:, hc] = old_val
+                            break
+
         np.add.at(reached["R16"], w32.ravel(), 1)
         a, b = zip(*_R16_PAIRS)
         w16 = _play(w32[:, list(a)], w32[:, list(b)])                 # 8 → reach QF
+        if ko_pinned:
+            for col in range(8):
+                h_tid = w32[0, list(a)[col]]; a_tid = w32[0, list(b)[col]]
+                pw = res_w[h_tid, a_tid]
+                if pw >= 0:
+                    w16[:, col] = pw
         np.add.at(reached["QF"], w16.ravel(), 1)
         a, b = zip(*_QF_PAIRS)
         qf = _play(w16[:, list(a)], w16[:, list(b)])                  # 4 → reach SF
+        if ko_pinned:
+            for col in range(4):
+                h_tid = w16[0, list(a)[col]]; a_tid = w16[0, list(b)[col]]
+                pw = res_w[h_tid, a_tid]
+                if pw >= 0:
+                    qf[:, col] = pw
         np.add.at(reached["SF"], qf.ravel(), 1)
         a, b = zip(*_SF_PAIRS)
         sf = _play(qf[:, list(a)], qf[:, list(b)])                    # 2 → finalists
+        if ko_pinned:
+            for col in range(2):
+                h_tid = qf[0, list(a)[col]]; a_tid = qf[0, list(b)[col]]
+                pw = res_w[h_tid, a_tid]
+                if pw >= 0:
+                    sf[:, col] = pw
         np.add.at(reached["final"], sf.ravel(), 1)
         champ = _play(sf[:, [0]], sf[:, [1]])                         # champion
+        if ko_pinned:
+            pw = res_w[sf[0, 0], sf[0, 1]]
+            if pw >= 0:
+                champ[:, 0] = pw
         np.add.at(reached["champion"], champ.ravel(), 1)
     else:
         # fallback (non-official draw): random single-elim bracket, sequential pairs
