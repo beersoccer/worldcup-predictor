@@ -139,9 +139,17 @@ logged → reports/bets/2026-06-20.json
 **排序规则：** 输出按场次分组，场次之间以空行分隔；场次按**该场最高 edge 降序**排列（最有价值的比赛在最前）；同场次内按 edge 降序排列。
 
 **AH 方向解读：**
-- `AH -0.5 home`：押主队赢（需赢至少 1 球）
-- `AH +0.5 home`：押主队不输（赢或平均可）
-- `AH -0.5 away` / `AH +0.5 away`：客队方向，反之亦然
+
+标签里的让球数（`+0.5` / `-0.5`）**始终加在主队**身上；`home` / `away` 只表示下注方向。
+
+| 盘口 | 结算逻辑（`adjusted = margin + line`） | 赢盘条件 |
+|---|---|---|
+| `AH -0.5 home` | adjusted > 0 → margin > 0.5 → margin ≥ 1 | 主队赢至少 1 球 |
+| `AH +0.5 home` | adjusted > 0 → margin > -0.5 → margin ≥ 0 | 主队赢或平 |
+| `AH -0.5 away` | adjusted < 0 → margin < 0.5 → margin ≤ 0 | 客队赢或平（不输即可） |
+| `AH +0.5 away` | adjusted < 0 → margin < -0.5 → margin ≤ -1 | 客队赢至少 1 球 |
+
+注意：同号的 home/away 赢盘条件**相反**——`+0.5 home` 是不输，`+0.5 away` 反而是必须赢。
 
 ---
 
