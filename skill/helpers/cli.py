@@ -220,7 +220,7 @@ def _detail_payload(model, results, fixtures, squads, sim, talent=None, fc_team=
     fc_team = fc_team or {}
     injury_delta = injury_delta or {}
     _, elo = compute_elo_history(results)
-    teams = sorted(set(fixtures["home_team"]) | set(fixtures["away_team"]))
+    teams = sorted(set(fixtures["home_team"].dropna()) | set(fixtures["away_team"].dropna()))
     sim = sim or {}
     tp, adv = sim.get("title_probability", {}), sim.get("advance_group_top2", {})
     r32, fin = sim.get("reach_knockout_R32", {}), sim.get("reach_final", {})

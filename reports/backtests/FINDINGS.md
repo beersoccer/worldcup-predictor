@@ -998,6 +998,45 @@ worsen historical walk-forward" cannot be technically verified for any w ≠ cur
 3. **Recommended operating mode until Pinnacle AH/OU odds are integrated (P0.2b):**
    `bet --mode all` or `bet --mode 1x2`. Treat AH/OU output as reference only.
 
-4. **AH directional bias investigation deferred to Run 32.** Candidate fix: increase
+4. **AH directional bias investigation deferred to Run 33.** Candidate fix: increase
    cross-confederation λ gap from 0.075 to 0.10–0.12 and re-run walk-forward on
    strong-vs-weak subset. Requires a clean FINDINGS.md entry before any code change.
+
+---
+
+## Run 32 — late-tournament NaN crash in predict --simulate: FIXED (2026-07-15)
+
+**Symptom:** `predict --simulate` raised `TypeError: '<' not supported between instances
+of 'float' and 'str'` during the Round of 16 / quarter-final phase. The simulation
+output was not generated; the command exited with a traceback.
+
+**Root cause:** Two call sites built a set of team names from the full fixtures DataFrame
+(all rounds), then called `sorted()`. Once the tournament entered the knockout stage,
+future KO slots whose opponents are not yet determined appear as `NaN` (float) in the
+`home_team`/`away_team` columns. Mixing floats and strings in the same sorted set is a
+`TypeError` in Python 3.
+
+**Fix — 2 sites:**
+
+1. `skill/sim/montecarlo.py` — `run()` fixture-team set (line ~167)
+   - **Before:** `set(fixtures["home_team"]) | set(fixtures["away_team"])` — traversed all
+     rounds, included NaN KO placeholders.
+   - **After:** Restricted to group-stage rows (`date <= _GROUP_END`) with `.dropna()` on
+     both columns before building the set used for the `OFFICIAL_GROUPS` comparison.
+   - `reconstruct_groups()` now also receives only group-stage rows (was receiving the
+     full frame), eliminating the same NaN exposure in the fallback path.
+   - `reconstruct_groups()` itself hardened: any row whose `home_team` or `away_team` is
+     not a `str` is silently skipped.
+
+2. `skill/helpers/cli.py` — `_detail_payload()` teams list (line ~223)
+   - **Before:** `sorted(set(fixtures["home_team"]) | set(fixtures["away_team"]))` — same
+     full-frame NaN exposure.
+   - **After:** `.dropna()` applied to both columns before building the set.
+
+**No model weights, probabilities, or prediction factors were changed.** The fixes are
+purely defensive: they restrict team-name collection to rows that are guaranteed to carry
+real string values. All simulation outputs and detail payloads remain mathematically
+identical for any match state where the bug did not trigger.
+
+**Verified:** `predict --simulate` completes without error at the QF stage (2026-07-15).
+Top-title odds, Golden Boot distribution, and bracket champion all output correctly.
