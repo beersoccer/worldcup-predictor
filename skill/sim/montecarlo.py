@@ -23,6 +23,8 @@ import pandas as pd
 def reconstruct_groups(fixtures: pd.DataFrame) -> list[list[str]]:
     adj = defaultdict(set)
     for r in fixtures.itertuples():
+        if not isinstance(r.home_team, str) or not isinstance(r.away_team, str):
+            continue
         adj[r.home_team].add(r.away_team)
         adj[r.away_team].add(r.home_team)
     seen, comps = set(), []
@@ -164,13 +166,16 @@ def run(model, fixtures: pd.DataFrame, n: int = 50000, seed: int = 0,
     real goals are credited to their real scorers; only *future* team goals are
     allocated by model share."""
     rng = np.random.default_rng(seed)
-    fixture_teams = set(fixtures["home_team"]) | set(fixtures["away_team"])
+    _gs_fx = fixtures[fixtures["date"] <= _GROUP_END]
+    fixture_teams = (
+        set(_gs_fx["home_team"].dropna()) | set(_gs_fx["away_team"].dropna())
+    )
     # use the official A..L draw when it matches the fixtures; else fall back
     if set(t for g in OFFICIAL_GROUPS.values() for t in g) == fixture_teams:
         groups = [OFFICIAL_GROUPS[c] for c in "ABCDEFGHIJKL"]
         official = True
     else:
-        groups = reconstruct_groups(fixtures)
+        groups = reconstruct_groups(_gs_fx)
         official = False
     teams = sorted({t for g in groups for t in g})
     tid = {t: i for i, t in enumerate(teams)}
