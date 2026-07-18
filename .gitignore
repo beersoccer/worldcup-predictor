@@ -53,3 +53,6 @@ data/fd_matches.json
 data/geocode_cache.json
 data/weather_archive_cache.json
 data/country_climate_cache.json
+
+# The Odds API disk cache (TTL-based, regenerable on next bet run)
+data/oddsapi_*.json

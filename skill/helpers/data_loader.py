@@ -513,6 +513,10 @@ def fetch_club_elo(force: bool = False) -> dict[str, float]:
 
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 ODDS_API_SPORTS = ["soccer_fifa_world_cup", "soccer_fifa_world_cup_2026"]
+_ODDS_CACHE_DIR = paths.DATA
+_ODDS_H2H_TTL = 2 * 3600       # 2h: per-match 1X2 odds shift slowly intraday
+_ODDS_TITLE_TTL = 4 * 3600      # 4h: outright odds shift even slower
+_ODDS_AHOU_TTL = 2 * 3600       # 2h: AH/OU same cadence as h2h
 
 
 def _devig3(odds: list[float]) -> list[float]:
@@ -521,21 +525,63 @@ def _devig3(odds: list[float]) -> list[float]:
     return [x / s for x in inv] if len(inv) == 3 and s else []
 
 
-def fetch_oddsapi_matches() -> dict[tuple, list[float]]:
-    """The Odds API (paid key) → per-match 1X2 consensus across ALL bookmakers.
+_ODDS_TTLS = {"h2h": _ODDS_H2H_TTL, "title": _ODDS_TITLE_TTL, "ahOU": _ODDS_AHOU_TTL}
 
-    De-vigs each bookmaker's H/D/A, then averages across books (Pinnacle, Bet365, etc.).
-    Returns {(home, away): [pH, pD, pA]}. Empty if no ODDS_API_KEY — activates when you add
-    a key. This is the real multi-sportsbook consensus path."""
+
+def _odds_cache_r(name: str) -> tuple[bool, object]:
+    """Read cache file; returns (hit, data). Hit=False when missing or expired."""
+    import time as _time
+    p = _ODDS_CACHE_DIR / f"oddsapi_{name}.json"
+    ttl = _ODDS_TTLS.get(name, _ODDS_H2H_TTL)
+    if not p.exists():
+        return False, None
+    try:
+        cached = json.loads(p.read_text())
+        age = _time.time() - cached.get("fetched_at", 0)
+        if age < ttl:
+            return True, cached["data"]
+    except Exception:  # noqa: BLE001
+        pass
+    return False, None
+
+
+def _odds_cache_w(name: str, data: object) -> None:
+    import time as _time
+    p = _ODDS_CACHE_DIR / f"oddsapi_{name}.json"
+    tmp = p.with_suffix(".tmp")
+    try:
+        tmp.write_text(json.dumps({"fetched_at": _time.time(), "data": data}, ensure_ascii=False))
+        tmp.replace(p)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _log_credits(resp) -> None:
+    rem = resp.headers.get("x-requests-remaining")
+    if rem is not None:
+        import sys
+        print(f"[oddsapi] credits remaining: {rem}", file=sys.stderr)
+
+
+def fetch_oddsapi_matches() -> dict[tuple, list[float]]:
+    """The Odds API → per-match 1X2 consensus across ALL bookmakers (multi-book average).
+
+    De-vigs each bookmaker's H/D/A, averages across books (Pinnacle, Bet365, etc.).
+    Returns {(home, away): [pH, pD, pA]}. Empty if no ODDS_API_KEY.
+    Results cached 2h to protect monthly credit quota."""
     key = os.environ.get("ODDS_API_KEY", "")
     if not key:
         return {}
+    hit, cached = _odds_cache_r("h2h")
+    if hit:
+        return {tuple(k.split("||", 1)): v for k, v in cached.items()}
     out = {}
     for sport in ODDS_API_SPORTS:
         try:
             r = requests.get(f"{ODDS_API_BASE}/sports/{sport}/odds", params={
                 "apiKey": key, "regions": "eu,uk,us", "markets": "h2h",
                 "oddsFormat": "decimal"}, headers=UA, timeout=30)
+            _log_credits(r)
             if r.status_code != 200:
                 continue
             for ev in r.json():
@@ -556,19 +602,30 @@ def fetch_oddsapi_matches() -> dict[tuple, list[float]]:
                     out[(_canon(home), _canon(away))] = avg
         except requests.RequestException:
             continue
+    if out:
+        _odds_cache_w("h2h", {f"{k[0]}||{k[1]}": v for k, v in out.items()})
     return out
 
 
 def fetch_oddsapi_title(team_filter: set[str] | None = None) -> dict[str, float]:
-    """The Odds API outrights → {team: de-vigged title prob} (multi-book). Empty w/o key."""
+    """The Odds API outrights → {team: de-vigged title prob} (multi-book). Empty w/o key.
+    Results cached 4h."""
     key = os.environ.get("ODDS_API_KEY", "")
     if not key:
         return {}
+    hit, cached = _odds_cache_r("title")
+    if hit:
+        raw = cached
+        if team_filter:
+            raw = {t: p for t, p in raw.items() if t in team_filter}
+        s = sum(raw.values())
+        return {t: round(p / s, 5) for t, p in raw.items()} if s else {}
     for sport in ODDS_API_SPORTS:
         try:
             r = requests.get(f"{ODDS_API_BASE}/sports/{sport}/odds", params={
                 "apiKey": key, "regions": "eu,uk,us", "markets": "outrights",
                 "oddsFormat": "decimal"}, headers=UA, timeout=30)
+            _log_credits(r)
             if r.status_code != 200:
                 continue
             raw = {}
@@ -581,6 +638,7 @@ def fetch_oddsapi_title(team_filter: set[str] | None = None) -> dict[str, float]
                                 raw.setdefault(t, []).append(1.0 / o["price"])
             if raw:
                 imp = {t: sum(v) / len(v) for t, v in raw.items()}
+                _odds_cache_w("title", imp)
                 if team_filter:
                     imp = {t: p for t, p in imp.items() if t in team_filter}
                 s = sum(imp.values())
@@ -588,6 +646,95 @@ def fetch_oddsapi_title(team_filter: set[str] | None = None) -> dict[str, float]
         except requests.RequestException:
             continue
     return {}
+
+
+def fetch_oddsapi_ah_ou() -> dict:
+    """Pinnacle AH (spreads) + OU (totals) real odds via The Odds API.
+
+    Returns nested dict keyed by (home, away):
+      {
+        "spreads": {line: {"home": {"raw_odds": float, "p_market": float},
+                           "away": {"raw_odds": float, "p_market": float}}},
+        "totals":  {line: {"over": {"raw_odds": float, "p_market": float},
+                           "under": {"raw_odds": float, "p_market": float}}},
+      }
+    All lines including quarter-ball (e.g. 3.25) are included; settlement handles
+    the split-stake 5-outcome structure. Results cached 2h. Empty dict if no ODDS_API_KEY."""
+    key = os.environ.get("ODDS_API_KEY", "")
+    if not key:
+        return {}
+    hit, cached = _odds_cache_r("ahOU")
+    if hit:
+        # Restore tuple keys and float line keys after JSON round-trip.
+        result = {}
+        for key_str, entry in cached.items():
+            h, a = key_str.split("||", 1)
+            result[(h, a)] = {
+                "spreads": {float(k): v for k, v in entry.get("spreads", {}).items()},
+                "totals":  {float(k): v for k, v in entry.get("totals", {}).items()},
+            }
+        return result
+    out: dict = {}
+    for sport in ODDS_API_SPORTS:
+        try:
+            r = requests.get(f"{ODDS_API_BASE}/sports/{sport}/odds", params={
+                "apiKey": key, "bookmakers": "pinnacle",
+                "markets": "spreads,totals", "oddsFormat": "decimal"}, headers=UA, timeout=30)
+            _log_credits(r)
+            if r.status_code != 200:
+                continue
+            for ev in r.json():
+                home_raw, away_raw = ev.get("home_team"), ev.get("away_team")
+                if not home_raw or not away_raw:
+                    continue
+                home, away = _canon(home_raw), _canon(away_raw)
+                entry: dict = {"spreads": {}, "totals": {}}
+                for bk in ev.get("bookmakers", []):
+                    if bk.get("key") != "pinnacle":
+                        continue
+                    for mk in bk.get("markets", []):
+                        mkey = mk.get("key")
+                        outs = mk.get("outcomes", [])
+                        if mkey == "spreads" and len(outs) == 2:
+                            # Identify home/away by matching team name
+                            h_out = next((o for o in outs if _canon(o["name"]) == home), None)
+                            a_out = next((o for o in outs if _canon(o["name"]) == away), None)
+                            if not h_out or not a_out:
+                                continue
+                            line = float(h_out["point"])  # home team's line
+                            ph_raw = 1.0 / h_out["price"]
+                            pa_raw = 1.0 / a_out["price"]
+                            s = ph_raw + pa_raw
+                            entry["spreads"][line] = {
+                                "home": {"raw_odds": round(h_out["price"], 3),
+                                         "p_market": round(ph_raw / s, 5)},
+                                "away": {"raw_odds": round(a_out["price"], 3),
+                                         "p_market": round(pa_raw / s, 5)},
+                            }
+                        elif mkey == "totals" and len(outs) == 2:
+                            o_out = next((o for o in outs if o["name"].lower() == "over"), None)
+                            u_out = next((o for o in outs if o["name"].lower() == "under"), None)
+                            if not o_out or not u_out:
+                                continue
+                            line = float(o_out["point"])
+                            po_raw = 1.0 / o_out["price"]
+                            pu_raw = 1.0 / u_out["price"]
+                            s = po_raw + pu_raw
+                            entry["totals"][line] = {
+                                "over":  {"raw_odds": round(o_out["price"], 3),
+                                          "p_market": round(po_raw / s, 5)},
+                                "under": {"raw_odds": round(u_out["price"], 3),
+                                          "p_market": round(pu_raw / s, 5)},
+                            }
+                if entry["spreads"] or entry["totals"]:
+                    out[(home, away)] = entry
+        except requests.RequestException:
+            continue
+        if out:
+            break  # stop after first sport key that returns data
+    if out:
+        _odds_cache_w("ahOU", {f"{k[0]}||{k[1]}": v for k, v in out.items()})
+    return out
 
 
 def _fd_headers() -> dict:

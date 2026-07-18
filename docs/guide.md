@@ -29,7 +29,7 @@ cp .env.example .env
 |---|---|---|
 | `FOOTBALLDATA_KEY` | 必须（免费） | football-data.org 赛程/比分，注册即得 |
 | `APIFOOTBALL_KEY` | 可选（免费） | API-Football 首发阵容，注册即得 |
-| `ODDS_API_KEY` | 可选（付费） | The Odds API，含 Pinnacle 盘口，约 $30/月 |
+| `ODDS_API_KEY` | 可选（免费档可用） | The Odds API，含 Pinnacle 盘口；免费档 500 credits/月，足够实时 AH/OU 报价（每次调用 ~2 credits，2h 本地缓存）|
 
 **所有命令都需要** `PYTHONPATH=.` 前缀和激活的 venv。
 
@@ -155,7 +155,7 @@ logged → reports/bets/2026-06-20.json
 
 ## 4. 底层模型原理
 
-### 4.0 设计哲学：市场锚定的集成模型
+### 4.1 设计哲学：市场锚定的集成模型
 
 **博彩公司的共识赔率长期来看很难被打败**——它聚合了全球聪明钱、内幕信息、
 临场调整等所有公开和半公开信息。但**盲目复制赔率没有 edge**：照抄市场只能
@@ -174,7 +174,7 @@ logged → reports/bets/2026-06-20.json
 才能进入模型；所有市场（1X2 / AH / OU 各线）必须通过 walk-forward 校准才能
 进入下注白名单（见 §9）。
 
-### 4.1 第一层：Dixon-Coles 期望进球
+### 4.2 第一层：Dixon-Coles 期望进球
 
 模型从 49,000+ 场历史国际比赛中拟合每支球队的**进攻力 α** 和**防守力 β**，
 预测主客队各自的期望进球（λ_home、λ_away）：
@@ -190,7 +190,7 @@ logged → reports/bets/2026-06-20.json
 有了 λ_home 和 λ_away，把每个可能的比分（0-0 到 10-10）的概率全部算出来，
 组成一张 **11×11 的得分矩阵**，这是所有下游计算的基础。
 
-### 4.2 第二层：强度调整
+### 4.3 第二层：强度调整
 
 三个可选增强器，各以 10% 权重（`TALENT_WEIGHT`）叠入：
 
@@ -203,7 +203,7 @@ logged → reports/bets/2026-06-20.json
 **跨联合会修正**（Run 28）：UEFA/CONMEBOL 与其他联合会对阵时，
 主流模型系统性低估强队优势 → 对强队 λ 乘以 `exp(+0.075)`（gap=0.15）。
 
-### 4.3 第三层：比赛情境层
+### 4.4 第三层：比赛情境层
 
 对 λ_home / λ_away 施加场景乘数：
 
@@ -212,9 +212,13 @@ logged → reports/bets/2026-06-20.json
 | 海拔 | ✅ 采用 | 主场海拔 >2000m → 客队 λ 下调 |
 | 休息日差 | ✅ 采用（Run 12） | 多休 1 天 → 己方 λ +约 2% |
 | 天气 | ❌ 拒绝（Run 19/20） | 1642 场回测无显著信号 |
-| 其他 10 项 | ❌ 全部拒绝 | 重要性、死橡皮、卫冕冠军等均无信号 |
+| 其他 10 项 | ❌ 全部拒绝 | 重要性（Run 9）、死橡皮战意（Run 14）、卫冕冠军魔咒（Run 17）等均无信号 |
 
-### 4.4 第四层：市场锚定集成
+**"拒绝"的含义与再验证策略**
+
+"拒绝"指在当时的数据量下 walk-forward 验证无稳定正贡献，该因素物理上不进入模型（不是赋权重为 0，而是代码里根本不存在）。这不是永久封杀：任何时候积累了新赛事样本，可以重新发起 walk-forward 实验；若新数据支持正贡献，写入 FINDINGS.md 并加回特征集。
+
+### 4.5 第四层：市场锚定集成
 
 ```
 P_final = 0.60 × P_market + 0.40 × P_model_adj
@@ -224,7 +228,7 @@ P_final = 0.60 × P_market + 0.40 × P_model_adj
 - `P_model_adj`：DC + 强度 + 情境的综合模型概率
 - 权重 `MARKET_WEIGHT=0.60` 经 Run 26 walk-forward 验证
 
-### 4.5 让球盘 / 大小盘的 edge 来源（业界标准做法）
+### 4.6 让球盘 / 大小盘的 edge 来源（业界标准做法）
 
 参考 Pinnacle 与学术文献，欧赔（1X2）转亚盘（AH/OU）的标准做法是
 **反解市场隐含的进球期望 (λ_h^M, λ_a^M)**：
@@ -247,9 +251,18 @@ P_final = 0.60 × P_market + 0.40 × P_model_adj
 - **OU 2.0**：Run 30 实证拒绝（Δ Brier +0.030，反技能），硬封锁——与 OU 1.5 同属 DC ρ 低分修正区，模型在此段系统性失准
 - **AH −2.5 到 +2.5（含所有整数线）**：Run 30（2018-2024，n=419-574/线）全部 beat 基线，正式验证
 - **OU 2.5 到 4.5**：Run 27 + Run 30 验证通过（OU 2.5 低置信度）
-- **选线规则**：每场每类市场（AH / OU 分别）只推送 edge 最高的一条线进入 Kelly 引擎，避免同一方向的嵌套押注
+- **选线规则（`--best-line`，默认关闭）**：启用后每场每类市场（AH / OU 分别）只保留 edge 最高的一条线进入 Kelly 引擎，防止 AH -1.5 和 AH -2.5 等相关嵌套注单同时下注。使用 `bet --mode ahou --best-line` 开启
 
-### 4.6 罚点球：公平硬币（Run 29）
+**术语说明：**
+
+| 术语 | 含义 |
+|---|---|
+| **反技能（anti-skill）** | Brier score Δ Brier > 0，即模型预测比"什么都不做的历史胜率基线"更差——下注该线预期盈亏为负，加入模型反而损害精度 |
+| **硬封锁（hard block）** | 在 `kelly.py::MARKET_WHITELIST` 中设为 `False`，`is_whitelisted()` 直接返回 False，Kelly 引擎跳过该市场，无论 edge 看起来多高都无法生成注单 |
+
+硬封锁与 Run 14（死橡皮）、Run 17（卫冕魔咒）等因子拒绝用的是同一套机制：直觉上好看但 walk-forward 证伪的信号必须物理关闭，而不是靠"使用者自律"忽略。
+
+### 4.7 罚点球：公平硬币（Run 29）
 
 淘汰赛点球大战使用 **50/50 硬币**，不使用强度加权。
 Walk-forward 在 231 场实际点球上证明：强度加权方案 Brier=0.2683，
@@ -267,7 +280,7 @@ Walk-forward 在 231 场实际点球上证明：强度加权方案 Brier=0.2683�
 | 单注上限 | 本金 5% | 防止单笔大赌 |
 | 总仓位上限 | 本金 30% | 同日多注合并不超过 30% |
 | Edge 门槛 | 6%（默认） | 无真实 Pinnacle 盘口时的保守值；可用 `--edge` 覆盖 |
-| 每日注数上限 | 10（默认） | 按 edge 降序保留最优 N 条；可用 `--max-bets` 覆盖 |
+| 每日注数上限 | 无限制（默认） | 设置 `--max-bets N` 后按 edge 降序只保留最优 N 条 |
 | 最小注额 | 本金 0.5% | 信号太弱的注单丢弃 |
 
 ### 5.2 下注金额计算详解
@@ -344,6 +357,25 @@ won = over_wins（买大）或 not over_wins（买小）
 push：payout = 0；赢：payout = stake × (odds − 1)；输：payout = −stake
 ```
 
+**四分球线（如 OU 3.25 / AH ±1.25）**
+
+四分球线 = 下注金额拆为两半，分别押相邻的半球线和整数线：
+
+| 线条 | 下注拆分 |
+|---|---|
+| OU 3.25 | ½ stake → OU 3.0  ＋  ½ stake → OU 3.5 |
+| AH −1.25 | ½ stake → AH −1.5  ＋  ½ stake → AH −1.0 |
+
+每腿独立结算：
+```
+# OU 3.25 over 示例（stake=100，odds=1.95）：
+total=4 → 两腿均赢  → payout = +95（全赢）
+total=3 → OU3.0 走水 + OU3.5 输 → payout = 0 − 50 = −50（半输）
+total=2 → 两腿均输  → payout = −100（全输）
+```
+
+四分球线均通过白名单验证（`MARKET_WHITELIST` 中以 `ou_X.XX` / `ah_minus_X.XX` / `ah_plus_X.XX` 命名）。Pinnacle 报四分球线时，`bet` 命令会自动纳入候选；`derived_markets.py` 的概率计算原生支持四分球结构。
+
 ### 5.4 ROI 与看板 P&L 的局限性
 
 **ROI 计算：**
@@ -352,14 +384,16 @@ ROI = total_pnl / total_stake
 ```
 逐日按真实比分结算，累计。
 
-**重要局限：当前 AH/OU 赔率是模型公允价，不是真实市场赔率。**
+**AH/OU 赔率来源（两级精度）：**
 
-原因：Pinnacle 历史 AH/OU 存档需 The Odds API Business 档（~$99/月），
-尚未接入（P0.2b 待办）。因此：
+| 条件 | AH/OU `decimal_odds` 来源 | edge 的含义 |
+|---|---|---|
+| `ODDS_API_KEY` 已设置且 Pinnacle 有该场报价 | **Pinnacle 真实原始赔率**（de-vigged p_market） | 真实 edge，可直接参考 |
+| 无 key 或 Pinnacle 未报该场 | 模型公允价（1X2→λ 反解推导） | 模拟 edge，仅供参考 |
 
-- 看板显示的 AH/OU P&L 是"若以模型公允价成交"的模拟盈亏，**非真实市场 ROI**
-- 真实 edge 可能低于模型估算（市场在 AH/OU 上通常比 1X2 更有效）
-- 接入 Pinnacle 实盘后，ROI 才具备真实参考价值
+当 `bet` 命令输出 `[pinnacle] real AH/OU odds for N match(es)` 时，对应场次的 AH/OU edge 和 stake 基于真实 Pinnacle 赔率，具备真实参考价值。
+
+**局限：历史 AH/OU P&L 仍为模拟值。** 看板 P&L 回算使用的是赛时记录的赔率（若当时已接入 Pinnacle 则为真实赔率，否则为公允价）。Pinnacle 历史存档（P0.2b 待办）接入后，过往注单 ROI 才能完整重算。
 
 ### 5.5 仓位翻倍分析（1/4 Kelly → 1/2 Kelly）
 
@@ -375,11 +409,10 @@ ROI = total_pnl / total_stake
 **结论：在当前阶段维持 1/4 Kelly。**
 
 翻倍的前提条件尚不满足：
-1. **AH/OU 赔率来自模型公允价，不是真实 Pinnacle 盘口。** 真实 edge 未知，基于虚高 edge 放大仓位会成倍放大风险。
-2. **实盘验证样本不足。** 研究文献建议"20+ 注实证 edge ≥ 5% 后，可考虑升至 1/3 Kelly"。翻到 1/2 Kelly 需要更大样本。
+1. **实盘验证样本不足。** Pinnacle 真实 AH/OU 赔率已接入（`ODDS_API_KEY` 配置后自动启用），但累计实盘注数仍不足 30 注，edge 真实性尚待实证。
+2. **实盘 ROI 未达门槛。** 研究文献建议"20+ 注实证 edge ≥ 5% 后，可考虑升至 1/3 Kelly"。翻到 1/2 Kelly 需要更大样本和更高 ROI。
 
-**合理升级路径：** 接入 Pinnacle 真实 AH/OU 赔率（P0.2b）并积累 30+ 注实证数据后，
-若真实 ROI ≥ 5%，可将 Kelly 分数从 1/4 升至 1/3，同步将单注上限从 5% 升至 7%。
+**合理升级路径：** 基于 Pinnacle 真实赔率积累 30+ 注实证数据后，若真实 ROI ≥ 5%，可将 Kelly 分数从 1/4 升至 1/3，同步将单注上限从 5% 升至 7%。
 
 ### 5.6 建议执行原则
 
@@ -471,8 +504,66 @@ PYTHONPATH=. python -m skill.helpers.cli <subcommand> [args]
 2. **必须超越基线**：打败 ELO 基线或 DC 基线，才能进入模型
 3. **失败因子记录在案**：见 `reports/backtests/FINDINGS.md`
 
-已拒绝因子（实验后放弃）：天气、气候差、重要性、死橡皮、卫冕冠军、年龄乘数、
-裁判因素、贝叶斯点球技能、OU 1.5 市场、强度加权点球。
+已拒绝因子（实验后放弃）：天气、气候差、重要性、死橡皮、卫冕冠军、年龄乘数、裁判因素、贝叶斯点球技能、OU 1.5 市场、强度加权点球。
+
+### Run 编号体系
+
+每条 **Run N** 对应 `reports/backtests/FINDINGS.md` 中的一次完整实验，包含假设、方法、数据量、结果数字和最终决策。Run 编号在代码注释和本文档中频繁引用，用于追溯某个参数/因子/市场白名单条目的来源。常见引用示例：
+
+| Run | 内容 | 结论 |
+|---|---|---|
+| Run 9 | 比赛重要性加权训练 | 拒绝 |
+| Run 12 | 休息日差因子 | 采用（λ +2%/天） |
+| Run 14 | 死橡皮/战意因子 | 拒绝（强队赢更多，方向相反） |
+| Run 16 | 赛前伤病先验 | 无法 walk-forward 验证；改为机械先验（伤员从阵容中移除） |
+| Run 17 | 卫冕冠军魔咒 | 拒绝（100 场数据无规律） |
+| Run 26 | 市场锚定权重校准 | MARKET_WEIGHT=0.60 |
+| Run 27 | AH/OU 各线白名单初版 | OU 1.5 首次拒绝 |
+| Run 28 | 跨联合会强度修正 | 采用（gap=0.15） |
+| Run 29 | 点球大战模型 | 强度加权反技能，采用 50/50 硬币 |
+| Run 30 | AH/OU 白名单全量验证 | OU 2.0 拒绝；AH ±2.5 全线通过 |
+| Run 31 | WC2026 小组赛实盘验证 | 1X2 ROI +14.7%；AH −27% |
+
+### 回测工具与因子再验证流程
+
+项目的回测分两类，对应不同的脚本：
+
+| 类型 | 脚本 | CLI 入口 | 用途 |
+|---|---|---|---|
+| **全局 1X2 walk-forward** | `skill/backtest/walkforward.py` | `backtest` | 验证整体 DC + 市场锚定模型，输出 Brier/RPS vs ELO 基线 |
+| **AH/OU 市场白名单** | `skill/backtest/walkforward_markets.py` | `backtest --markets` | 逐线验证 AH/OU 各盘口是否 beat 基线 |
+| **单因子消融（ablation）** | `skill/backtest/ablation_*.py` | 直接运行模块 | 测试某个特定因子是否有正贡献，独立于主流程 |
+
+**重新测试被拒绝因子的操作步骤：**
+
+```bash
+# 1. 运行对应的 ablation 脚本（以天气因子为例）
+#    脚本自带缓存，首次运行会拉取 Open-Meteo 历史天气
+PYTHONPATH=. python -m skill.backtest.ablation_weather
+
+# 2. 查看输出的 Brier/RPS 对比（因子开启 vs 关闭 vs ELO 基线）
+#    若因子开启后 Brier 更低（更接近 0）、RPS 更低（更接近 0）→ 有正贡献
+
+# 3. 其他已有消融脚本
+PYTHONPATH=. python -m skill.backtest.ablation_rest        # 休息日差
+PYTHONPATH=. python -m skill.backtest.ablation_deadrubber  # 死橡皮战意
+PYTHONPATH=. python -m skill.backtest.ablation_holder      # 卫冕冠军
+PYTHONPATH=. python -m skill.backtest.ablation_confederation  # 跨联合会修正
+```
+
+**通过的判定标准（同 §9 第 2 条）：**
+
+- Brier 或 RPS 在 walk-forward 测试集上**优于 ELO 基线或 DC 基线**
+- 提升在多个时间窗口（不同 `--start` / `--end`）上**方向一致**，不随时间窗口翻转
+- 样本量足够：至少 300+ 场测试集，否则结果不可靠
+
+**若通过，加入特征集的操作：**
+
+1. 在 `skill/helpers/cli.py` 对应位置加入乘数或权重（通常在 `_apply_context` 或 `_strength_blend`）
+2. 在 `reports/backtests/FINDINGS.md` 新增 **Run N+1** 条目，记录假设、方法、数字、决策
+3. 更新本文档 §4.3 / §4.4 因子状态表，并在 §9 Run 编号表里补一行
+
+新因子对应的 ablation 脚本如果不存在，需要先写一个（参照 `ablation_rest.py` 的结构，确保 look-ahead free）。
 
 ---
 
@@ -483,15 +574,10 @@ A: 三种原因：(1) **淘汰赛场次未加载**——先跑 `fetch --all` 刷
 
 **Q: 为什么默认是 `--mode 1x2`？**  
 A: WC2026 小组赛 36 场实盘验证（Run 31）：1X2 场次命中率 56%、ROI +14.7%，
-是三类盘口中最稳健的。AH 场次命中率仅 21%，且当前 AH/OU 赔率来自模型公允价而非真实
-Pinnacle 盘口，edge 可信度有限。需要亚洲盘口时使用 `--mode ahou`。
+是三类盘口中最稳健的。AH 场次命中率仅 21%，edge 可信度受限（`ODDS_API_KEY` 未配置时 AH/OU 赔率回退到模型公允价）。需要亚洲盘口时使用 `--mode ahou`。
 
-**Q: 现在 AH ±1.5、±2.5、整数线、OU 各档都能下注吗？**  
-A: 大部分可以。1X2→λ_market 反解出市场隐含的进球期望后，所有线条的市场隐含概率
-都可以一致地计算。但有两条线被 walk-forward 实证拒绝（Run 27 + Run 30），永久封锁：
-**OU 1.5**（Brier 劣于无技能基线）和 **OU 2.0**（Δ Brier +0.030，强反技能）。
-其余 AH −2.5 到 +2.5 及 OU 2.5-4.5 均已通过 Run 30 验证。
-每场每类市场（AH / OU 各自）只推送 edge 最高的一条线，避免重复押注同方向嵌套赌注。
+**Q: 现在 AH ±1.5、±2.5、整数线、四分球线、OU 各档都能下注吗？**  
+A: 大部分可以。1X2→λ_market 反解出市场隐含的进球期望后，所有线条的市场隐含概率都可以一致地计算，包括 Pinnacle 报出的四分球线（OU 3.25、AH ±1.25 等）。但有两条线被 walk-forward 实证拒绝（Run 27 + Run 30），永久封锁：**OU 1.5**（Brier 劣于无技能基线）和 **OU 2.0**（Δ Brier +0.030，强反技能）。其余 AH −2.5 到 +2.5 及 OU 2.5–4.5（含四分球线）均已通过 Run 30 验证或由验证线衍生。四分球结算采用拆半押注，见 §5.3。加 `--best-line` 后每场每类市场（AH / OU 各自）只保留 edge 最高的一条线，避免同方向嵌套押注；默认不开启（见 §3.1）。
 
 **Q: 点球大战概率为何是 50/50？**  
 A: Walk-forward 在 231 场实际点球上验证，任何基于球队强度的加权方案都比硬币更差（Run 29）。
@@ -501,7 +587,7 @@ A: 运行 `review` 后，看板的"Betting"面板会显示累计 P&L、ROI 和�
 或直接读 `reports/bets/` 目录下各日期的 JSON 文件。
 
 **Q: 看板上的 AH/OU P&L 是真实盈亏吗？**  
-A: **不是真实市场盈亏**，是模拟值。当前 AH/OU 赔率来自模型自算的公允价（DC 得分矩阵反解），而非 Pinnacle 实盘赔率。接入 The Odds API Pinnacle 真实盘口（P0.2b）后，P&L 才具备真实参考价值。1X2 的赔率同样来自 Polymarket/Kalshi 去佣后的公允价。详见 §5.4。
+A: 取决于 `ODDS_API_KEY` 是否配置。配置后，`bet` 命令对 Pinnacle 有报价的场次使用**真实 Pinnacle 原始赔率**，此时 AH/OU P&L 具备真实参考价值；无 key 或 Pinnacle 未报该场时，回退到模型公允价（DC 得分矩阵反解），为模拟值。`bet` 输出 `[pinnacle] real AH/OU odds for N match(es)` 时可确认已使用真实赔率。1X2 赔率来自 Polymarket/Kalshi 去佣后的公允价。详见 §5.4。
 
 **Q: 实盘数据显示哪种盘口效果最好？**  
 A: WC2026 小组赛 36 场实盘统计（Run 31，2026-06-28）：
@@ -512,10 +598,10 @@ A: WC2026 小组赛 36 场实盘统计（Run 31，2026-06-28）：
 | OU 大小盘 | 45% | +37.1% | 严重依赖单注（Algeria vs Austria OU 2.5 over，剔除后 +11.6%） |
 | AH 让球盘 | 21% | −27.4% | 存在系统性偏差：强弱队悬殊场次让球线低估，多线条同时亏损放大损失 |
 
-**当前推荐：以 `--mode 1x2` 为主**。AH 在强弱队悬殊的淘汰赛阶段风险更大；OU 可辅助但方差极高。待接入 Pinnacle 真实 AH/OU 赔率（P0.2b）后再重新评估。详见 `reports/backtests/FINDINGS.md` Run 31。
+**当前推荐：以 `--mode 1x2` 为主**。AH 在强弱队悬殊的淘汰赛阶段风险更大；OU 可辅助但方差极高。Pinnacle 真实 AH/OU 赔率已接入（配置 `ODDS_API_KEY` 即启用），积累足够实盘样本后再重新评估加权策略。详见 `reports/backtests/FINDINGS.md` Run 31。
 
 **Q: 为什么不把 Kelly 分数翻倍以提高收益？**  
-A: 翻倍（1/4→1/2 Kelly）的前提是真实 edge 已验证充分。当前 AH/OU 赔率是模型公允价而非真实市场赔率，真实 edge 未知；加之实盘样本尚不足 20 注。基于未验证的 edge 放大仓位会成倍放大回撤风险。接入 Pinnacle 真实盘口并积累 30+ 注实证数据后，若 ROI ≥ 5%，可考虑升至 1/3 Kelly。详见 §5.5。
+A: 翻倍（1/4→1/2 Kelly）的前提是真实 edge 已验证充分。Pinnacle 真实 AH/OU 赔率已接入（`ODDS_API_KEY` 配置后启用），但实盘样本尚不足 30 注、真实 ROI 未达门槛。基于不足样本放大仓位会成倍放大回撤风险。积累 30+ 注实证数据且 ROI ≥ 5% 后，可考虑升至 1/3 Kelly。详见 §5.5。
 
 **Q: 出现 `[clubelo] primary API unavailable` 警告怎么办？**  
 A: 正常现象，`api.clubelo.com` 服务器偶发宕机。系统会自动切换到 GitHub 镜像数据（895 支俱乐部，最新至 2025-06-01），talent 层仍然工作，预测结果基本不受影响。无需手动干预；等官方 API 恢复后下一次 `fetch --all` 会自动更新本地缓存。
@@ -549,8 +635,8 @@ PYTHONPATH=. python -m skill.helpers.cli bet --bankroll 10000 --date 2026-06-23
 
 | 升级 | 决策 | 原因 |
 |---|---|---|
-| **Pinnacle 收盘价**（[The Odds API](https://the-odds-api.com) 基础付费档，~$30/月） | ✅ **推荐** | Pinnacle 收盘价是学界公认的"sharpest line"——低佣金、跟随聪明钱而非散户情绪。它是市场锚定层最值得花钱加的单一信号。配置只需在 `.env` 中设置 `ODDS_API_KEY`，加载器自动识别；无需改模型。 |
-| **Pinnacle 历史 AH/OU 存档**（同一 key 升级到 Business 档，~$99/月） | ⚠ **二期** | 用于让球盘 / 大小盘的真实 ROI 历史回测。在赛事开始前不必要；待 P0.2b 启动后再升级。 |
+| **Pinnacle 实时 AH/OU**（[The Odds API](https://the-odds-api.com) **免费档即可**，500 credits/月） | ✅ **已接入** | Pinnacle 是学界公认的"sharpest line"——低佣金、跟随聪明钱。免费档含实时 AH/OU 报价（含四分球线），2h 本地缓存控制消耗。配置只需在 `.env` 中设置 `ODDS_API_KEY`，`bet` 命令自动识别并优先使用真实 Pinnacle 赔率；无需改模型。 |
+| **Pinnacle 历史 AH/OU 存档**（同一 key 升级到 Business 档，~$99/月） | ⚠ **二期** | 用于让球盘 / 大小盘的真实 ROI 历史回测。当前 P&L 中历史注单赔率仍为模型公允价；升级后可完整重算。赛事结束前不必要。 |
 | **Macau 澳彩盘 / 亚洲零售盘** | ❌ **不推荐** | 散户驱动的让球盘，反映的是中国公众资金而非聪明钱，与 Pinnacle 高度相关却更带噪——加了等于在共识里多塞一份相关信号，是噪音不是 alpha。无免费 API、无干净历史档，无法在本项目"必须 walk-forward 验证才能采纳"的纪律下接入。同样理由排除其他亚洲零售盘。 |
 
 **核心原则**：花钱买**锐度（sharpness）和正交性（orthogonality）**——
@@ -563,5 +649,5 @@ Pinnacle 收盘价正是这种来源；不要花钱重复购买已经包含在�
 - [`README.md`](../README.md) — 项目门面与高层介绍
 - [`CHANGELOG.md`](../CHANGELOG.md) — 版本变化记录（Keep a Changelog 1.1.0）
 - [`reports/backtests/FINDINGS.md`](../reports/backtests/FINDINGS.md) — 完整因子验证记录
-- [`docs/competitor_analysis.md`](competitor_analysis.md) — 9 个 GitHub 同类项目横向对比
+- [`reports/competitor_deep_analysis.md`](../reports/competitor_deep_analysis.md) — 开源同类项目横向深度对比
 - [`.claude/plans/optimization_backlog.md`](../.claude/plans/optimization_backlog.md) — 当前优化路线图（开发者维度）

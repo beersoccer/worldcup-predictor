@@ -1103,17 +1103,31 @@ def _betting_payload(report_date: str) -> dict:
                     continue
                 hs, as_ = outcome
                 margin = hs - as_
-                adjusted = margin + line
-                # Integer line: adjusted == 0 is a push (stake refunded).
-                # Half line: adjusted is never an integer w.r.t. ±0 → no push.
-                if side == "home":
-                    won, push = adjusted > 0, adjusted == 0
+                odds = float(bet.get("decimal_odds", 1.0))
+                is_quarter = (abs(round(line * 4) - line * 4) < 0.01
+                              and abs(round(line * 2) - line * 2) > 0.01)
+                if is_quarter:
+                    # Split: ½ stake on (line-0.25), ½ stake on (line+0.25)
+                    half = stake / 2.0
+                    line_lo, line_hi = line - 0.25, line + 0.25
+                    if side == "home":
+                        adj_lo, adj_hi = margin + line_lo, margin + line_hi
+                    else:
+                        adj_lo, adj_hi = -(margin + line_lo), -(margin + line_hi)
+                    def _qleg(a, h=half, o=odds):
+                        return h * (o - 1.0) if a > 0 else (0.0 if a == 0 else -h)
+                    payout = _qleg(adj_lo) + _qleg(adj_hi)
                 else:
-                    won, push = adjusted < 0, adjusted == 0
-                if push:
-                    payout = 0.0
-                else:
-                    payout = stake * (float(bet.get("decimal_odds", 1.0)) - 1.0) if won else -stake
+                    # Integer line: push when adjusted == 0; half line: never pushes.
+                    adjusted = margin + line
+                    if side == "home":
+                        won, push = adjusted > 0, adjusted == 0
+                    else:
+                        won, push = adjusted < 0, adjusted == 0
+                    if push:
+                        payout = 0.0
+                    else:
+                        payout = stake * (odds - 1.0) if won else -stake
             elif " · OU " in label:
                 # label: "HOME vs AWAY · OU X[.Y] over|under"
                 try:
@@ -1131,13 +1145,28 @@ def _betting_payload(report_date: str) -> dict:
                     continue
                 hs, as_ = outcome
                 total = hs + as_
-                # Integer line: total == line → push. Half line never pushes.
-                if total == line:
-                    payout = 0.0
+                odds = float(bet.get("decimal_odds", 1.0))
+                is_quarter = (abs(round(line * 4) - line * 4) < 0.01
+                              and abs(round(line * 2) - line * 2) > 0.01)
+                if is_quarter:
+                    # Split: ½ stake on (line-0.25), ½ stake on (line+0.25)
+                    half = stake / 2.0
+                    line_lo, line_hi = line - 0.25, line + 0.25
+                    def _qou(ln, h=half, o=odds):
+                        if total == ln:   # push (integer lines only)
+                            return 0.0
+                        over_w = total > ln
+                        w = over_w if side == "over" else not over_w
+                        return h * (o - 1.0) if w else -h
+                    payout = _qou(line_lo) + _qou(line_hi)
                 else:
-                    over_wins = total > line
-                    won = over_wins if side == "over" else not over_wins
-                    payout = stake * (float(bet.get("decimal_odds", 1.0)) - 1.0) if won else -stake
+                    # Integer line: push when total == line. Half line never pushes.
+                    if total == line:
+                        payout = 0.0
+                    else:
+                        over_wins = total > line
+                        won = over_wins if side == "over" else not over_wins
+                        payout = stake * (odds - 1.0) if won else -stake
             else:
                 continue
             day_stake += stake
@@ -1191,20 +1220,19 @@ def _line_token(line: float) -> tuple[str, str]:
     mag = abs(line)
     if mag == int(mag):                # integer line (push possible)
         mag_str = str(int(mag))
+    elif abs(round(mag * 4) - mag * 4) < 0.01 and abs(round(mag * 2) - mag * 2) > 0.01:
+        mag_str = f"{mag:.2f}"         # quarter-ball (e.g. 0.25, 1.75)
     else:
-        mag_str = f"{mag:.1f}".rstrip("0").rstrip(".")
+        mag_str = f"{mag:.1f}"         # half-ball (e.g. 0.5, 1.5)
     return f"{sign_label}{mag_str}", f"{sign_key}_{mag_str}"
 
 
-def _ah_opportunities(p: dict, match: str, kellymod) -> list:
+def _ah_opportunities(p: dict, match: str, kellymod, pinnacle_ah: dict | None = None) -> list:
     """AH opportunities derived via 1X2→λ_market inference (industry standard).
 
-    Steps:
-      1. Hold DC's ρ fixed; reverse-engineer (λ_h^M, λ_a^M) that reproduce the
-         market 1X2 exactly through the DC score grid.
-      2. DC's own (λ_h^DC, λ_a^DC) → model AH probabilities.
-      3. Market λ → market-implied AH probabilities (consistent with 1X2).
-      4. Edge = model − market on each AH line; Kelly stake on edges ≥ 3%.
+    When pinnacle_ah is provided (from fetch_oddsapi_ah_ou()["spreads"]), lines that
+    Pinnacle quotes exactly substitute real Pinnacle decimal_odds and p_market instead
+    of the model-fair-odds fallback. Other lines still use the λ-inversion path.
 
     Three lines per match: main = round-to-half(-(λ_h^DC - λ_a^DC)), plus
     main ± 0.5. Lines clipped to [-3, +3].
@@ -1221,13 +1249,16 @@ def _ah_opportunities(p: dict, match: str, kellymod) -> list:
         return []
     lam_h_m, lam_a_m = lams_m
 
-    # main line = nearest half to -(home expected margin)
     delta = lam_h_dc - lam_a_dc
     main = max(-3.0, min(3.0, derived.round_to_half(-delta)))
-    lines = sorted({main - 0.5, main, main + 0.5})
+    lines: set[float] = {main - 0.5, main, main + 0.5}
+    if pinnacle_ah:
+        for pinn_line in pinnacle_ah:
+            if -3.0 <= pinn_line <= 3.0:
+                lines.add(pinn_line)
 
     ops = []
-    for line in lines:
+    for line in sorted(lines):
         if line < -3.0 or line > 3.0:
             continue
         model_ah = derived.asian_handicap(lam_h_dc, lam_a_dc, rho, line)
@@ -1236,16 +1267,20 @@ def _ah_opportunities(p: dict, match: str, kellymod) -> list:
         market_key = f"ah_{line_key}"
         for side in ("home", "away"):
             p_model = float(model_ah[f"p_{side}"])
-            p_market = float(market_ah[f"p_{side}"])
-            if p_market <= 0 or p_model <= 0:
+            if p_model <= 0:
                 continue
-            # market decimal odds: stake refunded on push; same fair-odds
-            # formula derived_markets._fair_odds uses, but priced off market λ.
-            p_push = float(market_ah["p_push"])
-            p_lose = max(0.0, 1.0 - p_market - p_push)
-            if p_market <= 1e-9:
-                continue
-            decimal_odds = round(1.0 + p_lose / p_market, 3)
+            pinn = (pinnacle_ah or {}).get(line, {}).get(side)
+            if pinn:
+                # Real Pinnacle odds: use de-vigged market prob and actual raw price.
+                p_market = pinn["p_market"]
+                decimal_odds = pinn["raw_odds"]
+            else:
+                p_market = float(market_ah[f"p_{side}"])
+                if p_market <= 1e-9:
+                    continue
+                p_push = float(market_ah["p_push"])
+                p_lose = max(0.0, 1.0 - p_market - p_push)
+                decimal_odds = round(1.0 + p_lose / p_market, 3)
             label = f"{match} · AH {line_label} {side}"
             ops.append(kellymod.Opportunity(
                 label=label, p_win=p_model, decimal_odds=decimal_odds,
@@ -1254,11 +1289,12 @@ def _ah_opportunities(p: dict, match: str, kellymod) -> list:
     return ops
 
 
-def _ou_opportunities(p: dict, match: str, kellymod) -> list:
+def _ou_opportunities(p: dict, match: str, kellymod, pinnacle_ou: dict | None = None) -> list:
     """OU opportunities derived via 1X2→λ_market inference.
 
-    Same pipeline as AH but on total goals: main = round-to-half(λ_h + λ_a),
-    three lines (main ± 0.5). Whitelist still hard-blocks OU 1.5 (Run 27).
+    When pinnacle_ou is provided (from fetch_oddsapi_ah_ou()["totals"]), lines that
+    Pinnacle quotes (including quarter-ball e.g. 3.25) substitute real Pinnacle odds.
+    Whitelist still hard-blocks OU 1.5 and OU 2.0 (Runs 27/30).
     """
     from ..model import derived_markets as derived
 
@@ -1274,29 +1310,41 @@ def _ou_opportunities(p: dict, match: str, kellymod) -> list:
 
     total = lam_h_dc + lam_a_dc
     main = max(1.5, min(4.5, derived.round_to_half(total)))
-    lines = sorted({main - 0.5, main, main + 0.5})
+    lines: set[float] = {main - 0.5, main, main + 0.5}
+    if pinnacle_ou:
+        for pinn_line in pinnacle_ou:
+            if 1.5 <= pinn_line <= 4.5:
+                lines.add(pinn_line)
+    lines_sorted = sorted(lines)
 
     ops = []
-    for line in lines:
+    for line in lines_sorted:
         if line < 1.5 or line > 4.5:
             continue
         model_ou = derived.over_under(lam_h_dc, lam_a_dc, rho, line)
         market_ou = derived.over_under(lam_h_m,  lam_a_m,  rho, line)
-        # OU line key: no sign; integer vs half handled by _line_token's mag part
         if line == int(line):
-            line_label, line_key = str(int(line)), str(int(line))
+            line_label = line_key = str(int(line))
+        elif abs(round(line * 4) - line * 4) < 0.01 and abs(round(line * 2) - line * 2) > 0.01:
+            line_label = line_key = f"{line:.2f}"   # quarter-ball e.g. "3.25"
         else:
-            line_label = f"{line:.1f}".rstrip("0").rstrip(".")
-            line_key = line_label
+            line_label = line_key = f"{line:.1f}"   # half-ball e.g. "3.5"
         market_key = f"ou_{line_key}"
         p_push = float(market_ou["p_push"])
         for side in ("over", "under"):
             p_model = float(model_ou[f"p_{side}"])
-            p_market = float(market_ou[f"p_{side}"])
-            if p_market <= 1e-9 or p_model <= 0:
+            if p_model <= 0:
                 continue
-            p_lose = max(0.0, 1.0 - p_market - p_push)
-            decimal_odds = round(1.0 + p_lose / p_market, 3)
+            pinn = (pinnacle_ou or {}).get(line, {}).get(side)
+            if pinn:
+                p_market = pinn["p_market"]
+                decimal_odds = pinn["raw_odds"]
+            else:
+                p_market = float(market_ou[f"p_{side}"])
+                if p_market <= 1e-9:
+                    continue
+                p_lose = max(0.0, 1.0 - p_market - p_push)
+                decimal_odds = round(1.0 + p_lose / p_market, 3)
             label = f"{match} · OU {line_label} {side}"
             ops.append(kellymod.Opportunity(
                 label=label, p_win=p_model, decimal_odds=decimal_odds,
@@ -1370,6 +1418,10 @@ def _cmd_bet(args):
     want_ou = mode in ("ou", "ahou", "all")
 
     target_date = rep.name  # YYYY-MM-DD of the requested report directory
+    # Pinnacle AH/OU real odds (free plan): fetched once, cached 2h.
+    pinnacle_ahou = data_loader.fetch_oddsapi_ah_ou() if (want_ah or want_ou) else {}
+    if pinnacle_ahou:
+        print(f"[pinnacle] real AH/OU odds for {len(pinnacle_ahou)} match(es)")
     ops: list[kellymod.Opportunity] = []
     for p in preds:
         if p.get("error") or "derived" not in p:
@@ -1377,6 +1429,7 @@ def _cmd_bet(args):
         if p.get("date") != target_date:
             continue
         match = f"{p['home']} vs {p['away']}"
+        pinn = pinnacle_ahou.get((p["home"], p["away"]), {})
         if want_1x2 and p.get("market_1x2"):
             for i, side in enumerate(("home", "draw", "away")):
                 p_model = (p["p_home"], p["p_draw"], p["p_away"])[i]
@@ -1388,9 +1441,11 @@ def _cmd_bet(args):
                     p_win=p_model, decimal_odds=1.0 / p_market, p_market=p_market,
                 ))
         if want_ah:
-            ops.extend(_ah_opportunities(p, match, kellymod))
+            ops.extend(_ah_opportunities(p, match, kellymod,
+                                         pinnacle_ah=pinn.get("spreads")))
         if want_ou:
-            ops.extend(_ou_opportunities(p, match, kellymod))
+            ops.extend(_ou_opportunities(p, match, kellymod,
+                                         pinnacle_ou=pinn.get("totals")))
     # Line filter: default shows all lines above edge threshold (user selects manually).
     # --best-line keeps only the highest-edge line per (match, market_type) to avoid
     # staking correlated nested bets (e.g. AH -1.5 + AH -2.5 same match same direction).
