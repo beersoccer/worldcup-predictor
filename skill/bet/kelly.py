@@ -54,6 +54,23 @@ MARKET_WHITELIST = {
     "ou_3.5": True,      # validated Run 27 + Run 30 Δbrier=-0.011
     "ou_4":   True,      # validated Run 30 Δbrier=-0.011 (push-bearing)
     "ou_4.5": True,      # validated Run 30 Δbrier=-0.007
+    # OU quarter lines — derived as 50/50 split of adjacent clean lines (Pinnacle-offered)
+    "ou_2.25": True,     # ½ ou_2(rejected) + ½ ou_2.5(valid); provisionally accepted; edge gate guards
+    "ou_2.75": True,     # ½ ou_2.5 + ½ ou_3 (both validated)
+    "ou_3.25": True,     # ½ ou_3 + ½ ou_3.5 (both validated)
+    "ou_3.75": True,     # ½ ou_3.5 + ½ ou_4 (both validated)
+    "ou_4.25": True,     # ½ ou_4 + ½ ou_4.5 (both validated)
+    # AH quarter lines — derived as 50/50 split of adjacent validated clean lines
+    "ah_minus_2.25": True,
+    "ah_minus_1.75": True,
+    "ah_minus_1.25": True,
+    "ah_minus_0.75": True,
+    "ah_minus_0.25": True,
+    "ah_plus_0.25":  True,
+    "ah_plus_0.75":  True,
+    "ah_plus_1.25":  True,
+    "ah_plus_1.75":  True,
+    "ah_plus_2.25":  True,
 }
 
 

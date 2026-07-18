@@ -658,9 +658,8 @@ def fetch_oddsapi_ah_ou() -> dict:
         "totals":  {line: {"over": {"raw_odds": float, "p_market": float},
                            "under": {"raw_odds": float, "p_market": float}}},
       }
-    Only clean lines (multiples of 0.5) are included; quarter-ball lines (e.g. 3.25)
-    are skipped because our settlement engine doesn't handle split-stake resolution.
-    Results cached 2h. Empty dict if no ODDS_API_KEY."""
+    All lines including quarter-ball (e.g. 3.25) are included; settlement handles
+    the split-stake 5-outcome structure. Results cached 2h. Empty dict if no ODDS_API_KEY."""
     key = os.environ.get("ODDS_API_KEY", "")
     if not key:
         return {}
@@ -703,8 +702,6 @@ def fetch_oddsapi_ah_ou() -> dict:
                             if not h_out or not a_out:
                                 continue
                             line = float(h_out["point"])  # home team's line
-                            if abs(round(line * 2) - line * 2) > 0.01:
-                                continue  # skip quarter-ball lines
                             ph_raw = 1.0 / h_out["price"]
                             pa_raw = 1.0 / a_out["price"]
                             s = ph_raw + pa_raw
@@ -720,8 +717,6 @@ def fetch_oddsapi_ah_ou() -> dict:
                             if not o_out or not u_out:
                                 continue
                             line = float(o_out["point"])
-                            if abs(round(line * 2) - line * 2) > 0.01:
-                                continue  # skip quarter-ball lines
                             po_raw = 1.0 / o_out["price"]
                             pu_raw = 1.0 / u_out["price"]
                             s = po_raw + pu_raw
