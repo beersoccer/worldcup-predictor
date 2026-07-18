@@ -38,6 +38,28 @@ removed, or has its weight changed (cross-references `reports/backtests/FINDINGS
   separated by a blank line. Matches are ordered by their highest edge (best
   opportunity first); lines within each match are ordered by edge descending.
   A horizontal rule separates bets from the TOTAL line.
+- **3rd-place match simulation** (`montecarlo.run`). The two SF losers are now
+  matched in a simulated 3rd-place play-off; their finish probability accumulates
+  into the new `reached["3rd"]` counter in `simulation.json`. Pinned KO results
+  are respected when `ko_pinned` is set.
+
+### Fixed
+- **`fetch_squads` now falls back to cache on Wikipedia scrape failure**
+  (`data_loader.fetch_squads`). Network errors, page-structure changes, or a
+  0-team parse all trigger a graceful fallback to the last cached
+  `data/squads_wc2026.json` instead of crashing `fetch --all`. A warning is
+  printed to stderr. If no cache exists the exception is re-raised as before.
+- **`predict --simulate` crash during knockout phase** (NaN `TypeError` in sorted
+  team-name sets). Two call sites that iterated all fixture rows now restrict to
+  group-stage rows with `.dropna()`, eliminating float NaN placeholders from
+  undecided KO slots. `reconstruct_groups()` also hardened to skip non-string
+  team entries. No prediction weights or probabilities changed.
+- **KO bracket slot assignment and Golden Boot double-counting** (`montecarlo.py`).
+  R16 slot reorder bug corrected; Golden Boot tallies de-duplicated to prevent
+  a player appearing twice in the same simulation run.
+- **AH direction labelling in docs** (`docs/guide.md`). "AH −1" was documented
+  as favouring the away side; corrected to favour the home side (handicap
+  applied to home team's raw score).
 
 ### Changed
 - **Default `bet --mode` changed from `ahou` to `1x2`** (Run 31 live validation).

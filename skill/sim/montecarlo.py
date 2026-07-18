@@ -314,7 +314,7 @@ def run(model, fixtures: pd.DataFrame, n: int = 50000, seed: int = 0,
     ko_pinned = bool((res_w >= 0).any())
 
     reached = {k: np.zeros(nt) for k in
-               ("R32", "R16", "QF", "SF", "final", "champion")}
+               ("R32", "R16", "QF", "SF", "final", "3rd", "champion")}
     group_adv = np.zeros(nt)  # top-2 finish probability
     first_cnt = np.zeros(nt)  # win-group counter
     group_of = {}             # team -> group letter (official order)
@@ -510,6 +510,16 @@ def run(model, fixtures: pd.DataFrame, n: int = 50000, seed: int = 0,
                 if pw >= 0:
                     sf[:, col] = pw
         np.add.at(reached["final"], sf.ravel(), 1)
+        # 3rd place match: SF losers (non-winners of each SF pair)
+        a_sf, b_sf = list(zip(*_SF_PAIRS))
+        sf_loser0 = np.where(sf[:, 0] == qf[:, a_sf[0]], qf[:, b_sf[0]], qf[:, a_sf[0]])
+        sf_loser1 = np.where(sf[:, 1] == qf[:, a_sf[1]], qf[:, b_sf[1]], qf[:, a_sf[1]])
+        third = _play(sf_loser0[:, None], sf_loser1[:, None])
+        if ko_pinned:
+            pw3 = res_w[sf_loser0[0], sf_loser1[0]]
+            if pw3 >= 0:
+                third[:, 0] = pw3
+        np.add.at(reached["3rd"], third.ravel(), 1)
         champ = _play(sf[:, [0]], sf[:, [1]])                         # champion
         if ko_pinned:
             pw = res_w[sf[0, 0], sf[0, 1]]
