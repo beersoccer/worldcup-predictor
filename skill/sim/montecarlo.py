@@ -159,6 +159,41 @@ def _rank_desc(rng, *keys) -> np.ndarray:
     return order[:, ::-1]  # descending
 
 
+def _reorder_for_pins(arr: "np.ndarray", pairs: set, pair_map: list) -> None:
+    """Reorder `arr[:, col]` so known match-up pairs sit in the same pair_map slot.
+
+    `arr` is shape (n, k) with team-ids; `pairs` is {frozenset({h_tid, a_tid})} for
+    matches that have been played and whose result is in res_w; `pair_map` is a list
+    of (a_col, b_col) index tuples (e.g. _R16_PAIRS).  Operates in-place on all n rows
+    identically (deterministic bracket — all sims share the same slot layout).
+    """
+    k = arr.shape[1]
+    for pair in pairs:
+        hi, ai = tuple(pair)
+        h_cols = [c for c in range(k) if arr[0, c] == hi]
+        a_cols = [c for c in range(k) if arr[0, c] == ai]
+        if not h_cols or not a_cols:
+            continue
+        hc, ac = h_cols[0], a_cols[0]
+        for pa, pb in pair_map:
+            if pa == hc:
+                if pb != ac:
+                    arr[:, pb], arr[:, ac] = arr[:, ac].copy(), arr[:, pb].copy()
+                break
+            if pb == hc:
+                if pa != ac:
+                    arr[:, pa], arr[:, ac] = arr[:, ac].copy(), arr[:, pa].copy()
+                break
+            if pa == ac:
+                if pb != hc:
+                    arr[:, pb], arr[:, hc] = arr[:, hc].copy(), arr[:, pb].copy()
+                break
+            if pb == ac:
+                if pa != hc:
+                    arr[:, pa], arr[:, hc] = arr[:, hc].copy(), arr[:, pa].copy()
+                break
+
+
 def run(model, fixtures: pd.DataFrame, n: int = 50000, seed: int = 0,
         squads: dict | None = None, gb_topk: int = 12, context: dict | None = None,
         scorer_goals: dict | None = None) -> dict:
@@ -226,19 +261,30 @@ def run(model, fixtures: pd.DataFrame, n: int = 50000, seed: int = 0,
         gf[:, h] += hg
         gf[:, a] += ag
 
+    # Accumulate actual KO goals so future_goals (used for Golden Boot allocation)
+    # only reflects goals not yet scored, not goals already on the board in KO matches.
+    for r in ko_played.itertuples():
+        h = tid.get(r.home_team)
+        a = tid.get(r.away_team)
+        if h is not None and a is not None and not pd.isna(r.home_score):
+            actual_goals[h] += int(r.home_score)
+            actual_goals[a] += int(r.away_score)
+
     # played-knockout result matrices (both orientations): winner id, actual goals.
     # Used inside _play for pairwise pinning when teams are correctly matched in a slot.
     # Also used directly to override winner arrays after each round (see below).
     res_w = np.full((nt, nt), -1, dtype=np.int64)
     res_hg = np.full((nt, nt), -1, dtype=np.int64)
     res_ag = np.full((nt, nt), -1, dtype=np.int64)
-    # ko_r32_pairs: {frozenset({h_tid, a_tid})} — only the 16 R32 matchups (first KO
-    # round), used to constrain home16/away16 without accidentally poisoning later rounds.
-    # Identified as the earliest 16 played KO fixtures (R32 always precedes R16+ in date).
+    # Round-specific pair sets so each reorder step only processes its own round's pairs.
+    # WC2026 structure: R32=16, R16=8, QF=4, SF=2, Final=1 → cumulative ri thresholds.
     ko_r32_pairs: set = set()
+    ko_r16_pairs: set = set()
+    ko_qf_pairs:  set = set()
+    ko_sf_pairs:  set = set()
     if len(ko_played):
         shoot = _shootout_winners()
-        # sort by date so we can identify the first 16 (R32) vs later rounds
+        # sort by date so we can identify each round by cumulative match count
         ko_sorted = ko_played.sort_values("date")
         for ri, r in enumerate(ko_sorted.itertuples()):
             h, a = tid[r.home_team], tid[r.away_team]
@@ -256,9 +302,15 @@ def run(model, fixtures: pd.DataFrame, n: int = 50000, seed: int = 0,
             res_w[h, a] = res_w[a, h] = w
             res_hg[h, a], res_ag[h, a] = hs, as_
             res_hg[a, h], res_ag[a, h] = as_, hs
-            # first 16 sorted KO fixtures = R32 (WC always has exactly 16 R32 matches)
+            pair = frozenset((h, a))
             if ri < 16:
-                ko_r32_pairs.add(frozenset((h, a)))
+                ko_r32_pairs.add(pair)
+            elif ri < 24:
+                ko_r16_pairs.add(pair)
+            elif ri < 28:
+                ko_qf_pairs.add(pair)
+            elif ri < 30:
+                ko_sf_pairs.add(pair)
     ko_pinned = bool((res_w >= 0).any())
 
     reached = {k: np.zeros(nt) for k in
@@ -424,51 +476,9 @@ def run(model, fixtures: pd.DataFrame, n: int = 50000, seed: int = 0,
                 pw = res_w[home16[0, col], away16[0, col]]
                 if pw >= 0:
                     w32[:, col] = pw
-            # R16 reorder: for each known R16 pair (h, a) from res_w, find where h and a
-            # sit in w32 and swap one of them into the slot that _R16_PAIRS will pair them.
-            a_r16, b_r16 = list(zip(*_R16_PAIRS))
-            for hi in range(nt):
-                for ai in range(nt):
-                    if res_w[hi, ai] < 0 or hi >= ai:
-                        continue  # only look at each known pair once
-                    # find which w32 columns carry hi and ai
-                    h_cols = [c for c in range(16) if w32[0, c] == hi]
-                    a_cols = [c for c in range(16) if w32[0, c] == ai]
-                    if not h_cols or not a_cols:
-                        continue
-                    hc, ac = h_cols[0], a_cols[0]
-                    # find which _R16_PAIRS slot pairs hc with something
-                    for pi, (pa, pb) in enumerate(_R16_PAIRS):
-                        if pa == hc:
-                            if pb != ac:
-                                # swap w32 col pb and ac so hi faces ai
-                                old_val = int(w32[0, pb])
-                                new_val = int(w32[0, ac])
-                                # find where old_val should go (the slot that was ac)
-                                w32[:, pb] = new_val
-                                w32[:, ac] = old_val
-                            break
-                        if pb == hc:
-                            if pa != ac:
-                                old_val = int(w32[0, pa])
-                                new_val = int(w32[0, ac])
-                                w32[:, pa] = new_val
-                                w32[:, ac] = old_val
-                            break
-                        if pa == ac:
-                            if pb != hc:
-                                old_val = int(w32[0, pb])
-                                new_val = int(w32[0, hc])
-                                w32[:, pb] = new_val
-                                w32[:, hc] = old_val
-                            break
-                        if pb == ac:
-                            if pa != hc:
-                                old_val = int(w32[0, pa])
-                                new_val = int(w32[0, hc])
-                                w32[:, pa] = new_val
-                                w32[:, hc] = old_val
-                            break
+            # R16 reorder: put each known R16 opponent pair into the same _R16_PAIRS slot.
+            # Use only ko_r16_pairs (not QF/SF pairs) to avoid corrupting later rounds.
+            _reorder_for_pins(w32, ko_r16_pairs, _R16_PAIRS)
 
         np.add.at(reached["R16"], w32.ravel(), 1)
         a, b = zip(*_R16_PAIRS)
@@ -479,6 +489,7 @@ def run(model, fixtures: pd.DataFrame, n: int = 50000, seed: int = 0,
                 pw = res_w[h_tid, a_tid]
                 if pw >= 0:
                     w16[:, col] = pw
+            _reorder_for_pins(w16, ko_qf_pairs, _QF_PAIRS)
         np.add.at(reached["QF"], w16.ravel(), 1)
         a, b = zip(*_QF_PAIRS)
         qf = _play(w16[:, list(a)], w16[:, list(b)])                  # 4 → reach SF
@@ -488,6 +499,7 @@ def run(model, fixtures: pd.DataFrame, n: int = 50000, seed: int = 0,
                 pw = res_w[h_tid, a_tid]
                 if pw >= 0:
                     qf[:, col] = pw
+            _reorder_for_pins(qf, ko_sf_pairs, _SF_PAIRS)
         np.add.at(reached["SF"], qf.ravel(), 1)
         a, b = zip(*_SF_PAIRS)
         sf = _play(qf[:, list(a)], qf[:, list(b)])                    # 2 → finalists

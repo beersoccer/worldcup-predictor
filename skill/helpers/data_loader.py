@@ -151,6 +151,11 @@ GOALSCORERS_CSV = paths.HISTORICAL / "goalscorers.csv"
 def fetch_goalscorers(force: bool = False) -> pd.DataFrame:
     """martj42 goalscorers (date, team, scorer, penalty, own_goal) — free, no auth.
     Powers recent-form and penalty-taker signals for the player model."""
+    import time
+    _CACHE_TTL = 24 * 3600  # refresh at most once per day (important during live tournaments)
+    if not force and GOALSCORERS_CSV.exists():
+        age = time.time() - GOALSCORERS_CSV.stat().st_mtime
+        force = age > _CACHE_TTL
     if force or not GOALSCORERS_CSV.exists():
         _refresh_csv(MARTJ42_GOALSCORERS_URL, GOALSCORERS_CSV, min_rows=10000,
                      required={"date", "team", "scorer"})
