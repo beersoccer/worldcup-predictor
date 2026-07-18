@@ -1040,3 +1040,35 @@ identical for any match state where the bug did not trigger.
 
 **Verified:** `predict --simulate` completes without error at the QF stage (2026-07-15).
 Top-title odds, Golden Boot distribution, and bracket champion all output correctly.
+
+---
+
+## Run 33 — 3rd-place simulation + squad-fetch resilience (2026-07-18)
+
+**No prediction factors changed.** Engineering enhancements only.
+
+### 3rd-place match simulation (`montecarlo.run`)
+
+**Change:** `reached` dict gains a `"3rd"` key. After each simulation's SF round, the
+two SF losers are identified (`sf_loser0`, `sf_loser1`) and played via `_play()`. The
+winner increments `reached["3rd"]`. Pinned KO results (`ko_pinned`) are respected:
+`res_w[sf_loser0[0], sf_loser1[0]]` is used if ≥ 0.
+
+**Impact:** `simulation.json` now includes 3rd-place finish probabilities for all teams.
+Champion / finalist / SF reach counts are unchanged. Walk-forward backtest outputs are
+identical (3rd-place is an additional metric, not a factor in any probability).
+
+### `fetch_squads` Wikipedia fallback (`data_loader.fetch_squads`)
+
+**Problem:** If the Wikipedia "2026 FIFA World Cup squads" page changes structure or
+is unreachable, `fetch --all` previously crashed with an unhandled exception, blocking
+the full daily refresh pipeline.
+
+**Fix:** The HTTP fetch + parse block is wrapped in a `try/except`. If parsing succeeds
+but yields 0 teams, a `ValueError` is raised explicitly. On any exception:
+- If `data/squads_wc2026.json` exists, it is loaded and a warning is printed to stderr.
+- If no cache exists, the exception propagates as before.
+
+**Impact:** `fetch --all` is now resilient to transient Wikipedia outages and page
+restructures. Squad data remains stale until the next successful fetch rather than
+interrupting the pipeline.

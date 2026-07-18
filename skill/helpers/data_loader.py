@@ -151,6 +151,11 @@ GOALSCORERS_CSV = paths.HISTORICAL / "goalscorers.csv"
 def fetch_goalscorers(force: bool = False) -> pd.DataFrame:
     """martj42 goalscorers (date, team, scorer, penalty, own_goal) — free, no auth.
     Powers recent-form and penalty-taker signals for the player model."""
+    import time
+    _CACHE_TTL = 24 * 3600  # refresh at most once per day (important during live tournaments)
+    if not force and GOALSCORERS_CSV.exists():
+        age = time.time() - GOALSCORERS_CSV.stat().st_mtime
+        force = age > _CACHE_TTL
     if force or not GOALSCORERS_CSV.exists():
         _refresh_csv(MARTJ42_GOALSCORERS_URL, GOALSCORERS_CSV, min_rows=10000,
                      required={"date", "team", "scorer"})
@@ -367,46 +372,57 @@ def fetch_squads(force: bool = False, team_filter: set[str] | None = None) -> di
     if SQUADS_JSON.exists() and not force:
         data = _json.loads(SQUADS_JSON.read_text())
     else:
-        html = requests.get(WIKI_SQUADS_URL, headers=UA, timeout=45).text
-        soup = BeautifulSoup(html, "lxml")
-        data = {}
-        for tb in soup.select("table.wikitable"):
-            head = [th.get_text(strip=True) for th in tb.select("tr th")][:7]
-            if not any(h == "Caps" for h in head):
-                continue
-            h = tb.find_previous(["h2", "h3", "h4"])
-            if not h:
-                continue
-            hl = h.find(class_="mw-headline")
-            raw = (hl.get_text(strip=True) if hl else h.get_text(strip=True))
-            raw = re.sub(r"\[edit\]\s*$", "", raw).strip()
-            team = _wiki_team(raw)
-            if not team:
-                continue
-            players = []
-            for r in tb.select("tr")[1:]:
-                cells = [c.get_text(" ", strip=True) for c in r.find_all(["td", "th"])]
-                if len(cells) < 6:
+        try:
+            html = requests.get(WIKI_SQUADS_URL, headers=UA, timeout=45).text
+            soup = BeautifulSoup(html, "lxml")
+            data = {}
+            for tb in soup.select("table.wikitable"):
+                head = [th.get_text(strip=True) for th in tb.select("tr th")][:7]
+                if not any(h == "Caps" for h in head):
                     continue
-                pos = (cells[1].split()[-1] if cells[1] else "").upper()
-                name = re.sub(r"\s*\(.*?\)\s*$", "", cells[2]).strip()  # drop (c) etc.
-                caps = re.sub(r"[^\d]", "", cells[4]) or "0"
-                goals = re.sub(r"[^\d]", "", cells[5]) or "0"
-                club = cells[6].strip() if len(cells) > 6 else ""
-                if pos not in {"GK", "DF", "MF", "FW"} or not name:
+                h = tb.find_previous(["h2", "h3", "h4"])
+                if not h:
                     continue
-                dob = ""
-                age = None
-                m = re.search(r"(\d{4}-\d{2}-\d{2})", cells[3]) if len(cells) > 3 else None
-                if m:
-                    dob = m.group(1)
-                    by, bm, bd = (int(x) for x in dob.split("-"))
-                    age = paths.WC2026_START.year - by - ((6, 11) < (bm, bd))
-                players.append({"name": name, "pos": pos, "caps": int(caps),
-                                "goals": int(goals), "club": club, "dob": dob, "age": age})
-            if players:
-                data[team] = players
-        _write_json_atomic(SQUADS_JSON, _json.dumps(data, ensure_ascii=False, indent=1))
+                hl = h.find(class_="mw-headline")
+                raw = (hl.get_text(strip=True) if hl else h.get_text(strip=True))
+                raw = re.sub(r"\[edit\]\s*$", "", raw).strip()
+                team = _wiki_team(raw)
+                if not team:
+                    continue
+                players = []
+                for r in tb.select("tr")[1:]:
+                    cells = [c.get_text(" ", strip=True) for c in r.find_all(["td", "th"])]
+                    if len(cells) < 6:
+                        continue
+                    pos = (cells[1].split()[-1] if cells[1] else "").upper()
+                    name = re.sub(r"\s*\(.*?\)\s*$", "", cells[2]).strip()  # drop (c) etc.
+                    caps = re.sub(r"[^\d]", "", cells[4]) or "0"
+                    goals = re.sub(r"[^\d]", "", cells[5]) or "0"
+                    club = cells[6].strip() if len(cells) > 6 else ""
+                    if pos not in {"GK", "DF", "MF", "FW"} or not name:
+                        continue
+                    dob = ""
+                    age = None
+                    m = re.search(r"(\d{4}-\d{2}-\d{2})", cells[3]) if len(cells) > 3 else None
+                    if m:
+                        dob = m.group(1)
+                        by, bm, bd = (int(x) for x in dob.split("-"))
+                        age = paths.WC2026_START.year - by - ((6, 11) < (bm, bd))
+                    players.append({"name": name, "pos": pos, "caps": int(caps),
+                                    "goals": int(goals), "club": club, "dob": dob, "age": age})
+                if players:
+                    data[team] = players
+            if not data:
+                raise ValueError("parsed 0 teams — Wikipedia page structure may have changed")
+            _write_json_atomic(SQUADS_JSON, _json.dumps(data, ensure_ascii=False, indent=1))
+        except Exception as e:  # noqa: BLE001
+            import sys as _sys
+            if SQUADS_JSON.exists():
+                print(f"[squads refresh failed, keeping cached {SQUADS_JSON.name}] {e}",
+                      file=_sys.stderr)
+                data = _json.loads(SQUADS_JSON.read_text())
+            else:
+                raise
 
     if team_filter:
         return {t: p for t, p in data.items() if t in team_filter}

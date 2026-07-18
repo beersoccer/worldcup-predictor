@@ -417,7 +417,7 @@ PYTHONPATH=. python -m skill.helpers.cli <subcommand> [args]
 | 文件 | 生成命令 | 内容 |
 |---|---|---|
 | `reports/YYYY-MM-DD/predictions.json` | `predict` | 每场比赛的概率、λ、AH/OU 公允赔率 |
-| `reports/YYYY-MM-DD/simulation.json` | `predict --simulate` | 蒙特卡洛夺冠概率、各轮晋级率 |
+| `reports/YYYY-MM-DD/simulation.json` | `predict --simulate` | 蒙特卡洛夺冠概率、各轮晋级率（含第三名概率 `reached.3rd`） |
 | `reports/YYYY-MM-DD/bracket.json` | `predict --simulate` | 最大概率单链赛程预测 |
 | `reports/bets/YYYY-MM-DD.json` | `bet` | 当日下注建议（含 Kelly 参数、edge） |
 | `site/data.json` | `publish` | 看板全量数据（预测 + 模拟 + 下注面板） |
@@ -434,6 +434,7 @@ PYTHONPATH=. python -m skill.helpers.cli <subcommand> [args]
 | 历史比赛结果 + WC2026 小组赛赛程 | [martj42/international_results](https://github.com/martj42/international_results)（公共 CSV） | DC MLE 训练（49k+ 场，含友谊赛 / 资格赛 / 正赛）；小组赛比分通常有 1-2 天延迟 | 无需 |
 | WC2026 淘汰赛赛程 | football-data.org 免费层（`/competitions/WC/matches`，缓存至 `data/fd_matches.json`） | 淘汰赛对阵在 martj42 打完前不存在；从 fd_matches 合并进赛程，比分通过 `_overlay_fd_scores` 回填 | `FOOTBALLDATA_KEY` |
 | 进球记录 | martj42/goalscorers.csv | Golden Boot + 球员形态 | 无需 |
+| 球队名单（球员 / 出场 / 俱乐部） | 维基百科"2026 FIFA World Cup squads"页面（HTML 抓取，缓存至 `data/squads_wc2026.json`；刷新失败时自动沿用旧缓存） | Golden Boot 候选球员名单、球员形态 | 无需 |
 | 点球大战历史 | martj42/shootouts.csv | 点球硬币校准（Run 29） | 无需 |
 | 实时比分回填 | football-data.org 免费层 | 小组赛比分实时回填（不等 martj42 延迟） | `FOOTBALLDATA_KEY` |
 | 比赛日首发 XI | API-Football 免费层 | 阵容确认、缺阵球员调整 | `APIFOOTBALL_KEY` |
