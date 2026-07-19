@@ -37,6 +37,67 @@ cp .env.example .env
 
 ## 2. 每日操作流程
 
+**系统处理流程总览**
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant CLI as CLI
+    participant Src as 外部数据源
+    participant Cache as 本地缓存
+    participant DC as Dixon-Coles
+    participant Layers as 增强层
+    participant MC as 蒙特卡洛
+    participant Kelly as Kelly 引擎
+    participant Out as 输出文件
+
+    User->>CLI: fetch --all
+    CLI->>Src: martj42 results.csv（历史 49k 国际比赛，1-2 天延迟）
+    CLI->>Src: football-data.org（WC2026 赛程 + 实时比分）
+    CLI->>Src: Polymarket / Kalshi（per-match 1X2 预测市场赔率）
+    CLI->>Src: The Odds API / Pinnacle（AH/OU 实时盘口，可选）
+    CLI->>Src: clubelo.com + FC25（俱乐部 ELO + 球员评分）
+    CLI->>Src: API-Football（首发阵容，可选）
+    Src-->>Cache: 写入本地缓存（2h–7d 过期策略）
+
+    User->>CLI: predict --simulate
+    CLI->>Cache: 读取历史结果（3 年窗口 ≈ 3200 场）
+    CLI->>DC: fit(as_of=今日, xi=0.001, train_years=3)
+    Note over DC: 加权 MLE + 指数时间衰减<br/>输出每队 attack / defence / ρ
+    DC-->>CLI: DCModel
+
+    loop 每场未完赛比赛
+        CLI->>DC: lambdas(home, away)
+        DC-->>CLI: λ_home / λ_away（基础期望进球）
+        CLI->>Layers: talent(clubElo+FC25) + context(海拔/休息日/跨洲修正)
+        Layers-->>CLI: λ_adj（调整后期望进球）
+        CLI->>CLI: 11×11 得分矩阵（含 DC ρ 低分修正）→ P_model [H,D,A]
+        CLI->>Cache: 读取 P_market（Polymarket / Kalshi）
+        CLI->>CLI: P_final = 0.60·P_market + 0.40·P_model
+        CLI->>CLI: AH/OU：λ_market 反解 → derived_markets
+        CLI-->>Out: 追加 predictions.json（per-match）
+    end
+
+    CLI->>MC: run(DCModel, fixtures, n=50_000)
+    Note over MC: Poisson 采样组赛 → 官方淘汰支架<br/>→ 50/50 硬币点球
+    MC-->>Out: simulation.json（夺冠/晋级/第三名/金靴概率）
+
+    User->>CLI: bet --bankroll N
+    CLI->>Out: 读取 predictions.json（当日）
+    CLI->>Cache: 读取 Pinnacle AH/OU（若 ODDS_API_KEY 已设置）
+    CLI->>Kelly: portfolio_kelly(白名单过滤后的信号)
+    Note over Kelly: ¼ Kelly，单注 ≤ 5%，总仓位 ≤ 30%
+    Kelly-->>Out: bets/YYYY-MM-DD.json
+
+    User->>CLI: publish
+    CLI->>Out: predictions + simulation + bets → site/data.json
+
+    User->>CLI: review（次日）
+    CLI->>Src: 拉取最新比分（football-data.org）
+    CLI->>Out: 结算注单 → 更新 P&L
+    CLI->>CLI: 自动重跑 predict --simulate + publish
+```
+
 ### 2.1 标准流程（比赛日）
 
 ```bash
@@ -267,6 +328,54 @@ P_final = 0.60 × P_market + 0.40 × P_model_adj
 淘汰赛点球大战使用 **50/50 硬币**，不使用强度加权。
 Walk-forward 在 231 场实际点球上证明：强度加权方案 Brier=0.2683，
 硬币 Brier=0.2500，前者反技能。在可用样本量下无法恢复球队级点球技能。
+
+### 4.8 蒙特卡洛锦标赛模拟（`skill/sim/montecarlo.py`）
+
+**作用：把单场概率转化为锦标赛级结论。**
+
+DC 模型为每场比赛输出 λ_home / λ_away，但"法国夺冠概率"这类问题涉及 7
+轮淘汰赛的复合路径，理论枚举（48 队 × 7 轮 × 所有可能路径）在计算上不可行。
+蒙特卡洛通过重复模拟解决这个问题：
+
+| 阶段 | 模拟方法 |
+|---|---|
+| 小组赛（6 场 × 12 组） | 以 DC λ 做独立 Poisson 采样得到比分，计算积分/净胜球/总进球排名 |
+| 第三名资格赛 | 回溯算法（backtracking）将 8 支最佳第三名分配到 8 个合法 R32 位置 |
+| 淘汰赛 R32→决赛 | 按官方支架（`_R32/_R16_PAIRS/_QF_PAIRS/_SF_PAIRS`）Poisson 采样；平局时 50/50 硬币点球 |
+| 三四名决赛 | 两支半决赛负者对阵，winner 计入 `reached["3rd"]` |
+
+跑完 50,000 次后，每队的晋级/夺冠/第三名次数除以 50,000 即为概率。
+这是 `simulation.json` 里所有锦标赛级数字的唯一来源。
+
+**关键设计约束（Run 22 / Run 24 验证）：**
+- 已打完的小组赛/淘汰赛比分在每次模拟中**钉死**，不重新采样——保证历史结果被正确吸收
+- 第三名资格赛位置分配使用官方 2026 资格集（`_THIRD_ELIG`），同组不早于 QF 相遇
+
+**Golden Boot（金靴奖）：** 每次模拟中，每场比赛的总进球数先由 Poisson 分配给两队，
+再按球员得分份额（career_rate × 近期热门系数 × FC OVR × PK 能力）随机分配
+给具体球员，累加 50k 次后输出 `p_winner`（以该总进球数赢得金靴的概率）。
+
+### 4.9 训练数据与模型更新机制
+
+**这不是预训练模型。** 每次运行 `predict` 时，DC 模型都从头用 L-BFGS-B
+重新拟合，没有持久化权重文件。
+
+| 维度 | 数值 | 说明 |
+|---|---|---|
+| 历史数据总量 | 49,520 场 | martj42 国际比赛结果，1872 年至今 |
+| **实际训练窗口** | **≈ 3,200 场** | 最近 3 年（`train_years=3.0`），Run 10 验证优于 8 年窗口 |
+| 时间衰减 | xi = 0.001 / 天 | 约 693 天半衰期；近期比赛权重更高 |
+| 入选门槛 | ≥ 8 场历史记录 | 低于此数的队不参与当次拟合 |
+| 拟合参数数量 | 2 × N_teams + 3 | attack / defence（N−1 自由参数）+ intercept / home_adv / ρ |
+
+**更新路径（每日）：**
+
+1. `fetch --all` 从 martj42 GitHub CSV 拉取最新结果（1-2 天延迟）
+2. football-data.org 实时回填当日 WC2026 比分（零延迟）
+3. `predict` 以**今日**为 `as_of` 截止重新拟合，自动吸收最新比赛结果
+
+每次重新拟合约需 20-30 秒。这是"每比赛日必须重跑 `predict`"的根本原因——
+不仅仅是因为市场赔率变了，还因为已打完比赛的强度估计也在实时更新。
 
 ---
 
@@ -502,13 +611,13 @@ PYTHONPATH=. python -m skill.helpers.cli <subcommand> [args]
 所有预测因子必须满足：
 1. **Walk-forward 验证**：用严格截止日期 T 之前的数据预测 T 之后，绝无回望
 2. **必须超越基线**：打败 ELO 基线或 DC 基线，才能进入模型
-3. **失败因子记录在案**：见 `reports/backtests/FINDINGS.md`
+3. **失败因子记录在案**：见 `docs/FINDINGS.md`
 
 已拒绝因子（实验后放弃）：天气、气候差、重要性、死橡皮、卫冕冠军、年龄乘数、裁判因素、贝叶斯点球技能、OU 1.5 市场、强度加权点球。
 
 ### Run 编号体系
 
-每条 **Run N** 对应 `reports/backtests/FINDINGS.md` 中的一次完整实验，包含假设、方法、数据量、结果数字和最终决策。Run 编号在代码注释和本文档中频繁引用，用于追溯某个参数/因子/市场白名单条目的来源。常见引用示例：
+每条 **Run N** 对应 `docs/FINDINGS.md` 中的一次完整实验，包含假设、方法、数据量、结果数字和最终决策。Run 编号在代码注释和本文档中频繁引用，用于追溯某个参数/因子/市场白名单条目的来源。常见引用示例：
 
 | Run | 内容 | 结论 |
 |---|---|---|
@@ -560,7 +669,7 @@ PYTHONPATH=. python -m skill.backtest.ablation_confederation  # 跨联合会修�
 **若通过，加入特征集的操作：**
 
 1. 在 `skill/helpers/cli.py` 对应位置加入乘数或权重（通常在 `_apply_context` 或 `_strength_blend`）
-2. 在 `reports/backtests/FINDINGS.md` 新增 **Run N+1** 条目，记录假设、方法、数字、决策
+2. 在 `docs/FINDINGS.md` 新增 **Run N+1** 条目，记录假设、方法、数字、决策
 3. 更新本文档 §4.3 / §4.4 因子状态表，并在 §9 Run 编号表里补一行
 
 新因子对应的 ablation 脚本如果不存在，需要先写一个（参照 `ablation_rest.py` 的结构，确保 look-ahead free）。
@@ -598,7 +707,7 @@ A: WC2026 小组赛 36 场实盘统计（Run 31，2026-06-28）：
 | OU 大小盘 | 45% | +37.1% | 严重依赖单注（Algeria vs Austria OU 2.5 over，剔除后 +11.6%） |
 | AH 让球盘 | 21% | −27.4% | 存在系统性偏差：强弱队悬殊场次让球线低估，多线条同时亏损放大损失 |
 
-**当前推荐：以 `--mode 1x2` 为主**。AH 在强弱队悬殊的淘汰赛阶段风险更大；OU 可辅助但方差极高。Pinnacle 真实 AH/OU 赔率已接入（配置 `ODDS_API_KEY` 即启用），积累足够实盘样本后再重新评估加权策略。详见 `reports/backtests/FINDINGS.md` Run 31。
+**当前推荐：以 `--mode 1x2` 为主**。AH 在强弱队悬殊的淘汰赛阶段风险更大；OU 可辅助但方差极高。Pinnacle 真实 AH/OU 赔率已接入（配置 `ODDS_API_KEY` 即启用），积累足够实盘样本后再重新评估加权策略。详见 `docs/FINDINGS.md` Run 31。
 
 **Q: 为什么不把 Kelly 分数翻倍以提高收益？**  
 A: 翻倍（1/4→1/2 Kelly）的前提是真实 edge 已验证充分。Pinnacle 真实 AH/OU 赔率已接入（`ODDS_API_KEY` 配置后启用），但实盘样本尚不足 30 注、真实 ROI 未达门槛。基于不足样本放大仓位会成倍放大回撤风险。积累 30+ 注实证数据且 ROI ≥ 5% 后，可考虑升至 1/3 Kelly。详见 §5.5。
@@ -648,6 +757,6 @@ Pinnacle 收盘价正是这种来源；不要花钱重复购买已经包含在�
 
 - [`README.md`](../README.md) — 项目门面与高层介绍
 - [`CHANGELOG.md`](../CHANGELOG.md) — 版本变化记录（Keep a Changelog 1.1.0）
-- [`reports/backtests/FINDINGS.md`](../reports/backtests/FINDINGS.md) — 完整因子验证记录
+- [`docs/FINDINGS.md`](FINDINGS.md) — 完整因子验证记录
 - [`reports/competitor_deep_analysis.md`](../reports/competitor_deep_analysis.md) — 开源同类项目横向深度对比
 - [`.claude/plans/optimization_backlog.md`](../.claude/plans/optimization_backlog.md) — 当前优化路线图（开发者维度）

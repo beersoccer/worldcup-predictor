@@ -13,7 +13,7 @@ validation gates every factor before it can carry stakes.
 ## What it does
 
 - **Per match:** 1X2 + Asian Handicap + Over/Under + full scoreline distribution
-- **Tournament:** Monte Carlo (≥50k runs) → group / round / title probabilities
+- **Tournament:** Monte Carlo (≥50k runs) → group / round / title / 3rd-place probabilities
 - **Live:** daily refresh of odds, lineups, weather; realised RPS / Brier tracked
 - **Bet slate:** `cli bet` drafts a Quarter-Kelly stake-sized recommendation
   list (default `--mode 1x2`, validated highest hit-rate in WC2026 live data;
@@ -26,7 +26,7 @@ validation gates every factor before it can carry stakes.
   reference, model internals, Kelly discipline, paid-upgrade decisions, FAQ
 - **[`CHANGELOG.md`](CHANGELOG.md)** — versioned behaviour changes
   (Keep a Changelog 1.1.0 / SemVer 2.0.0)
-- **[`reports/backtests/FINDINGS.md`](reports/backtests/FINDINGS.md)** —
+- **[`docs/FINDINGS.md`](docs/FINDINGS.md)** —
   every factor accepted or rejected, with backtest evidence
 - **[`docs/competitor_analysis.md`](docs/competitor_analysis.md)** —
   9-project horizontal comparison anchoring the optimization backlog
