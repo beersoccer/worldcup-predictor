@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/).
 
 Categories used: `Added` · `Changed` · `Deprecated` · `Removed` · `Fixed` · `Security` · `Backtest`.
 Doctrine: a `Backtest` entry is required whenever a prediction factor is added,
-removed, or has its weight changed (cross-references `reports/backtests/FINDINGS.md`).
+removed, or has its weight changed (cross-references `docs/FINDINGS.md`).
 
 ---
 
