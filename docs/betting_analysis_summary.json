@@ -1,0 +1,73 @@
+{
+  "capital": 1200.0,
+  "generated_at": "2026-07-20T13:13:11",
+  "period": {
+    "first_kickoff": "2026-06-21",
+    "last_kickoff": "2026-07-20",
+    "active_days": 25
+  },
+  "counts": {
+    "bets": 80,
+    "win": 44,
+    "lose": 31,
+    "refund": 5,
+    "by_status": {
+      "WIN_HALF": 5,
+      "WIN": 39,
+      "LOSE": 27,
+      "DRAW": 5,
+      "LOSE_HALF": 4
+    },
+    "win_rate": 0.55,
+    "effective_win_rate": 0.575
+  },
+  "amounts": {
+    "total_stake": 7689.85,
+    "total_pnl": 718.07,
+    "avg_stake": 96.12,
+    "max_stake": 168.0,
+    "min_stake": 33.08,
+    "avg_odds": 0.9248,
+    "ending_bankroll": 1918.07
+  },
+  "metrics": {
+    "turnover_rate": 6.408208,
+    "utilization_peak": 0.508333,
+    "utilization_avg": 0.080103,
+    "roi": 0.598392,
+    "yield": 0.093379,
+    "peak_day": "2026-06-24",
+    "peak_day_exposure": 610.0,
+    "peak_day_bets": 5
+  },
+  "by_market": {
+    "大小盘": {
+      "n": 38,
+      "stake": 3815.0,
+      "pnl": 438.11,
+      "roi_on_stake": 0.114839
+    },
+    "让球盘": {
+      "n": 41,
+      "stake": 3826.88,
+      "pnl": 327.93,
+      "roi_on_stake": 0.085691
+    },
+    "输赢盘": {
+      "n": 1,
+      "stake": 47.97,
+      "pnl": -47.97,
+      "roi_on_stake": -1.0
+    }
+  },
+  "definitions": {
+    "turnover_rate": "总投注金额 / 本金",
+    "utilization_peak": "单日投注占用峰值 / 本金（按开赛日汇总）",
+    "utilization_avg": "平均单笔投注金额 / 本金",
+    "roi": "最终赢利 / 本金",
+    "yield": "最终赢利 / 总投注金额",
+    "win": "WIN + WIN_HALF",
+    "lose": "LOSE + LOSE_HALF",
+    "refund": "DRAW"
+  }
+}
